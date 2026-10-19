@@ -18,7 +18,7 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **⌘Z** undoes a step, **⌘C** copies, **⌘D** toggles the change view, **esc** closes.
   - With a selection, the shortcut refines the selection. The badge next to the field refines the whole field.
 
-Hover an underline to see the fix and apply it with a click.
+Hover an underline to see the fix and apply it with a click. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
 
 ## Build
 
@@ -35,7 +35,15 @@ On first launch:
 ## Notes
 
 - Text you type in checked apps is sent to the Anthropic API with your key. Password fields are never read. Terminals, code editors and password managers are off by default; turn Quill off for any app from the menu-bar icon.
-- Edits go through Accessibility in native apps. In Chrome, Electron apps (Slack, Linear, Notion) and other web editors, Quill selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact.
+- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Quill selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name. Before replacing anything, Quill checks that the selected text is exactly the words it means to fix, and aborts otherwise.
+- Finding where a word is on screen varies by app. Quill tries, in order, and remembers per field what worked:
+  1. the field's own position API (native apps, Chrome);
+  2. the text runs inside rich editors (Claude, Slack);
+  3. text markers;
+  4. measuring the text against a run's frame (Dia; single-line text only);
+  5. hit-testing.
+  Positions that cover the whole field are rejected. Where nothing works, the badge still shows the issue count and refine still works.
+- Suggestions that would mangle text, such as several words replaced by nothing or by bare punctuation, are dropped.
 - Debug log (timings and counts only, never your text): `defaults write dev.quill.app debugLog -bool true`, then see `~/Library/Logs/Quill.log`.
 
 ## Testing
@@ -44,7 +52,7 @@ On first launch:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first` and `refine-accept` drive the real fix and refine paths.
 
-The field commands only act on TextEdit, or on text that starts with `QUILLTEST`. Measured on 2026-10-19:
+The field commands only act on TextEdit, or on text that starts with `QUILLTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
 
 | | First underline or word | Full answer |
 |---|---|---|

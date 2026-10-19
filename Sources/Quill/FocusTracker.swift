@@ -49,6 +49,15 @@ final class FocusTracker {
     private var frontmost: (pid: pid_t, bundleID: String, url: URL?)?
     private var excluded = Set<String>()
     private var paused = false
+    private var enhancedProbed = Set<pid_t>()
+    private var markerMap: MarkerMap?
+    private var leafMap: LeafMap?
+    private var geometry: (element: AXUIElement, mode: GeometryMode, text: String)?
+    private var geometryLogged = Set<String>()
+    private var hitCache: (text: String, rects: [String: CGRect]) = ("", [:])
+    private var hitTestsThisPass = 0
+    private var lastRejectLog = ""
+    private var lastRejectTime = Date.distantPast
     private let ownPid = ProcessInfo.processInfo.processIdentifier
 
     func start() {
@@ -146,14 +155,33 @@ final class FocusTracker {
     /// Turns on Chromium/Electron accessibility once per process; returns whether it's web-based.
     private func prepare(_ app: (pid: pid_t, bundleID: String, url: URL?)) -> Bool {
         if let known = webBasedPids[app.pid] { return known }
-        let chromium = Self.chromiumBrowsers.contains(app.bundleID)
-        let electron = app.url.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Contents/Frameworks/Electron Framework.framework").path) } ?? false
+        let engine = app.url.map(Self.chromiumEngine) ?? .none
+        let chromium = engine == .browser || Self.chromiumBrowsers.contains(app.bundleID)
+        let electron = engine == .electron
         if !preparedPids.contains(app.pid) {
             preparedPids.insert(app.pid)
             AX.enableAccessibilityTree(pid: app.pid, chromiumBrowser: chromium)
+            Log.info("prepared \(app.bundleID): \(chromium ? "chromium browser" : electron ? "electron" : "native")")
         }
         webBasedPids[app.pid] = chromium || electron
         return chromium || electron
+    }
+
+    enum ChromiumEngine { case none, browser, electron }
+
+    /// Every Chromium-based app ships a renderer helper ("… Helper (Renderer).app", or
+    /// "Codex (Renderer).app"); Electron apps also ship Electron Framework. Catches apps we
+    /// don't know by name (Dia, Arc, Codex…).
+    static func chromiumEngine(_ url: URL) -> ChromiumEngine {
+        let frameworks = url.appendingPathComponent("Contents/Frameworks")
+        let fm = FileManager.default
+        if fm.fileExists(atPath: frameworks.appendingPathComponent("Electron Framework.framework").path) { return .electron }
+        guard let walker = fm.enumerator(at: frameworks, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return .none }
+        for case let item as URL in walker {
+            if item.lastPathComponent.hasSuffix("(Renderer).app") { return .browser }
+            if item.pathExtension == "app" || walker.level > 5 { walker.skipDescendants() }
+        }
+        return .none
     }
 
     private func findScrollArea(above el: AXUIElement) -> AXUIElement? {
@@ -175,20 +203,238 @@ final class FocusTracker {
             let clip = snap.visible.isEmpty ? CGRect.infinite : snap.visible.insetBy(dx: -2, dy: -2)
             var out: [String: [CGRect]] = [:]
             var calls = 0
+            var rejected: [String: Int] = [:]
+            var sample: CGRect?
+            self.hitTestsThisPass = 0
             for issue in issues.prefix(80) where issue.range.end <= ns.length {
                 var rects: [CGRect] = []
                 for word in Self.wordRanges(in: issue.range, of: ns) {
                     guard calls < 240 else { break }
                     calls += 1
+                    guard let r = self.wordBounds(word, in: snap) else { rejected["no bounds", default: 0] += 1; continue }
                     // Apps without range support return giant boxes; skip those.
-                    guard let r = AX.bounds(for: word, in: snap.element), r.height < 80 else { continue }
+                    guard r.height < 80 else { rejected["too tall", default: 0] += 1; sample = r; continue }
                     let visible = r.intersection(clip)
-                    guard !visible.isNull, visible.height >= r.height * 0.6 else { continue }
+                    guard !visible.isNull, visible.height >= r.height * 0.6 else { rejected["outside field", default: 0] += 1; sample = r; continue }
                     rects.append(r)
                 }
                 if !rects.isEmpty { out[issue.id] = Self.mergeLines(rects) }
             }
+            if !rejected.isEmpty {
+                // Numbers only: why positions were rejected, never any text.
+                let key = "\(snap.bundleID)|\(rejected.keys.sorted())"
+                if key != self.lastRejectLog || Date().timeIntervalSince(self.lastRejectTime) > 30 {
+                    self.lastRejectLog = key
+                    self.lastRejectTime = Date()
+                    Log.info("positions rejected in \(snap.bundleID): \(rejected) sample=\(sample.map { "\($0)" } ?? "-") frame=\(snap.frame) visible=\(snap.visible)")
+                }
+                // Debug only: once per app, try every way of finding text positions and report.
+                if UserDefaults.standard.bool(forKey: "debugLog"), !self.enhancedProbed.contains(snap.pid),
+                   let first = issues.first(where: { $0.range.end <= ns.length }) {
+                    self.enhancedProbed.insert(snap.pid)
+                    self.diagnose(snap, range: Self.wordRanges(in: first.range, of: ns)[0])
+                }
+            }
             DispatchQueue.main.async { completion(out) }
+        }
+    }
+
+    enum GeometryMode: String { case direct, leaves, markers, measured, hitTest, none }
+
+    /// A word's screen rect. Tries AXBoundsForRange, then text markers, then hit-testing,
+    /// remembering per field which one works. Must run on `queue`.
+    private func wordBounds(_ range: NSRange, in snap: FieldSnapshot) -> CGRect? {
+        let forced = UserDefaults.standard.string(forKey: "forceGeometry").flatMap(GeometryMode.init)  // debug
+        var mode = forced
+        if mode == nil, let g = geometry, CFEqual(g.element, snap.element), g.mode != .none || g.text == snap.text {
+            mode = g.mode
+        }
+        if mode == nil {
+            mode = detectGeometry(range, in: snap)
+            geometry = (snap.element, mode!, snap.text)
+            let key = "\(snap.bundleID):\(mode!.rawValue)"
+            if !geometryLogged.contains(key) {
+                geometryLogged.insert(key)
+                Log.info("geometry for \(snap.bundleID): \(mode!.rawValue)")
+            }
+        }
+        return bounds(range, in: snap, mode: mode!)
+    }
+
+    private func detectGeometry(_ range: NSRange, in snap: FieldSnapshot) -> GeometryMode {
+        for mode in [GeometryMode.direct, .leaves, .markers, .measured, .hitTest] {
+            if mode != .direct, !snap.webBased { break }
+            if bounds(range, in: snap, mode: mode) != nil { return mode }
+        }
+        return .none
+    }
+
+    private func bounds(_ range: NSRange, in snap: FieldSnapshot, mode: GeometryMode) -> CGRect? {
+        let rect: CGRect?
+        switch mode {
+        case .direct:
+            rect = AX.bounds(for: range, in: snap.element)
+        case .leaves:
+            if leafMap == nil || !CFEqual(leafMap!.element, snap.element) || leafMap!.text != snap.text {
+                leafMap = LeafMap(element: snap.element, text: snap.text)
+            }
+            rect = leafMap?.bounds(for: range)
+        case .measured:
+            if leafMap == nil || !CFEqual(leafMap!.element, snap.element) || leafMap!.text != snap.text {
+                leafMap = LeafMap(element: snap.element, text: snap.text)
+            }
+            rect = leafMap?.measuredBounds(for: range)
+        case .markers:
+            if markerMap == nil || !CFEqual(markerMap!.element, snap.element) || markerMap!.text != snap.text {
+                markerMap = MarkerMap(element: snap.element, text: snap.text)
+            }
+            rect = markerMap?.bounds(for: range)
+        case .hitTest:
+            let area = snap.visible.isEmpty ? snap.frame : snap.visible
+            let key = "\(range.location),\(range.length)|\(area)"
+            if hitCache.text != snap.text { hitCache = (snap.text, [:]) }
+            if let cached = hitCache.rects[key] { return cached }
+            guard hitTestsThisPass < 8 else { return nil }  // keeps a refresh fast; the rest come next pass
+            hitTestsThisPass += 1
+            rect = HitTest.bounds(for: range, in: snap.element, area: area)
+            if let rect { hitCache.rects[key] = rect }
+        case .none:
+            rect = nil
+        }
+        guard let rect, !isWholeField(rect, range: range, in: snap) else { return nil }
+        return rect
+    }
+
+    /// Some Electron fields answer every range with the whole field's box.
+    private func isWholeField(_ r: CGRect, range: NSRange, in snap: FieldSnapshot) -> Bool {
+        let f = snap.frame
+        guard f.width > 120, range.length < 40 else { return false }
+        return r.width >= f.width * 0.85
+    }
+
+    /// Debug: every route to a word's screen position, numbers only. Runs on `queue`.
+    private func diagnose(_ snap: FieldSnapshot, range: NSRange) {
+        let el = snap.element
+        func f(_ r: CGRect?) -> String { r.map { String(format: "(%.0f,%.0f %.0fx%.0f)", $0.minX, $0.minY, $0.width, $0.height) } ?? "nil" }
+        var report = ["app=\(snap.bundleID) role=\(AX.string(el, kAXRoleAttribute) ?? "?") chars=\((snap.text as NSString).length) range=[\(range.location),\(range.length)] frame=\(f(snap.frame))"]
+        report.append("direct=\(f(AX.bounds(for: range, in: el)))")
+        // Text markers, step by step.
+        let full = TextMarkers.fullRange(of: el)
+        let start = full.flatMap(TextMarkers.start(of:))
+        let word = start.flatMap { TextMarkers.rightWord(from: $0, in: el) }
+        report.append("markers: full=\(full != nil) fullLen=\(full.flatMap { TextMarkers.length(of: $0, in: el) }.map(String.init) ?? "nil") fullBounds=\(f(full.flatMap { TextMarkers.bounds(of: $0, in: el) })) start=\(start != nil) word=\(word != nil) wordLen=\(word.flatMap { TextMarkers.length(of: $0, in: el) }.map(String.init) ?? "nil") wordBounds=\(f(word.flatMap { TextMarkers.bounds(of: $0, in: el) }))")
+        // Point to index.
+        var point = CGPoint(x: snap.frame.minX + 6, y: snap.frame.minY + 8)
+        var hit = "nil"
+        if let v = AXValueCreate(.cgPoint, &point), let r = TextMarkers.param(el, "AXRangeForPosition", v), CFGetTypeID(r) == AXValueGetTypeID() {
+            var cf = CFRange(); if AXValueGetValue(r as! AXValue, .cfRange, &cf) { hit = "[\(cf.location),\(cf.length)]" }
+        }
+        report.append("rangeForPosition(top-left)=\(hit)")
+        var hits: [String] = []
+        for fx in [0.1, 0.4, 0.7, 0.95] {
+            var p = CGPoint(x: snap.frame.minX + snap.frame.width * fx, y: snap.frame.midY)
+            if let v = AXValueCreate(.cgPoint, &p), let r = TextMarkers.param(el, "AXRangeForPosition", v), CFGetTypeID(r) == AXValueGetTypeID() {
+                var cf = CFRange(); _ = AXValueGetValue(r as! AXValue, .cfRange, &cf); hits.append("\(cf.location)")
+            } else { hits.append("nil") }
+        }
+        report.append("rangeForPosition(across)=\(hits.joined(separator: ","))")
+        if let leaves = LeafMap(element: el, text: snap.text) {
+            let firstLeaf = leaves.leaves[0]
+            report.append("leaves=\(leaves.leaves.count) first=[\(firstLeaf.start),\(firstLeaf.length)] frame=\(f(AX.frame(firstLeaf.element))) leafBounds=\(f(leaves.bounds(for: range)))")
+        } else {
+            report.append("leaves=none")
+        }
+        // Children and their frames.
+        var kids: [String] = []
+        if let children = AX.value(el, kAXChildrenAttribute) as? [AXUIElement] {
+            for c in children.prefix(4) {
+                let grand = (AX.value(c, kAXChildrenAttribute) as? [AXUIElement])?.count ?? 0
+                kids.append("\(AX.string(c, kAXRoleAttribute) ?? "?")\(f(AX.frame(c)))+\(grand)")
+            }
+            report.append("children=\(children.count) \(kids.joined(separator: " "))")
+        } else {
+            report.append("children=none")
+        }
+        // Font, for measuring text ourselves.
+        var font = "nil"
+        var cf = CFRange(location: range.location, length: range.length)
+        if let v = AXValueCreate(.cfRange, &cf), let a = TextMarkers.param(el, "AXAttributedStringForRange", v) as? NSAttributedString, a.length > 0 {
+            let attrs = a.attributes(at: 0, effectiveRange: nil)
+            font = attrs.keys.map(\.rawValue).sorted().joined(separator: ",")
+            if let fd = attrs[NSAttributedString.Key("AXFont")] as? [String: Any] {
+                font += " size=\(fd["AXFontSize"] ?? "?") family=\(fd["AXFontFamily"] ?? "?")"
+            }
+        }
+        report.append("attributes=\(font)")
+        // Full accessibility mode, then try again.
+        AXUIElementSetAttributeValue(AXUIElementCreateApplication(snap.pid), "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        usleep(1_500_000)
+        report.append("after enhanced: direct=\(f(AX.bounds(for: range, in: el))) wordBounds=\(f(TextMarkers.fullRange(of: el).flatMap(TextMarkers.start(of:)).flatMap { TextMarkers.rightWord(from: $0, in: el) }.flatMap { TextMarkers.bounds(of: $0, in: el) }))")
+        Log.info("diagnose " + report.joined(separator: " | "))
+    }
+
+    /// Debug: for each issue, the rect from AXBoundsForRange next to the text-marker rect.
+    func compareRects(for issues: [Issue], in snap: FieldSnapshot) {
+        queue.async {
+            let started = Date()
+            let map = MarkerMap(element: snap.element, text: snap.text)
+            map?.extend(to: issues.map(\.range.end).max() ?? 0)
+            Log.info("compare: markers \(map.map { "\($0.boundaries.count) boundaries, trustworthy=\($0.trustworthy)" } ?? "unsupported") in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            for issue in issues {
+                let direct = AX.bounds(for: issue.range, in: snap.element)
+                let marker = map?.bounds(for: issue.range)
+                let hit = HitTest.bounds(for: issue.range, in: snap.element, area: snap.visible.isEmpty ? snap.frame : snap.visible)
+                let leaves = LeafMap(element: snap.element, text: snap.text)
+                let leaf = leaves?.bounds(for: issue.range)
+                let measured = leaves?.measuredBounds(for: issue.range)
+                func f(_ r: CGRect?) -> String { r.map { String(format: "(%.0f,%.0f %.0fx%.0f)", $0.minX, $0.minY, $0.width, $0.height) } ?? "nil" }
+                Log.info("compare [\(issue.range.location),\(issue.range.length)] direct=\(f(direct)) markers=\(f(marker)) leaves=\(f(leaf)) measured=\(f(measured)) hitTest=\(f(hit))")
+            }
+        }
+    }
+
+    /// Debug: logs what the focused field reports about its geometry. Numbers only, no text.
+    /// With `enhance`, first turns on Chromium's full accessibility mode for the app.
+    func probeGeometry(enhance: Bool) {
+        queue.async {
+            guard let snap = self.read(reuseText: false) else { Log.info("probe: no text field focused"); return }
+            if enhance {
+                AXUIElementSetAttributeValue(AXUIElementCreateApplication(snap.pid), "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+                usleep(600_000)
+            }
+            let el = AX.focusedElement(inApp: snap.pid) ?? snap.element
+            let n = (snap.text as NSString).length
+            var names: CFArray?
+            AXUIElementCopyParameterizedAttributeNames(el, &names)
+            let params = (names as? [String])?.filter { $0.contains("Range") || $0.contains("Bounds") } ?? []
+            func b(_ r: NSRange) -> String { r.end <= n && r.length > 0 ? (AX.bounds(for: r, in: el).map { "\($0)" } ?? "nil") : "n/a" }
+            Log.info("probe \(snap.bundleID) enhanced=\(enhance) role=\(AX.string(el, kAXRoleAttribute) ?? "?") chars=\(n) frame=\(snap.frame) visible=\(snap.visible)")
+            Log.info("probe params: \(params)")
+            Log.info("probe bounds first=\(b(NSRange(location: 0, length: min(1, n)))) firstWord=\(b(NSRange(location: 0, length: min(4, n)))) last=\(b(NSRange(location: max(n - 1, 0), length: min(1, n))))")
+        }
+    }
+
+    /// Debug: geometry of the focused field in a given (possibly background) app.
+    /// Read-only, numbers only; reports whether the field is a QUILLTEST field without logging text.
+    func probeApp(bundleID: String, enhance: Bool) {
+        queue.async {
+            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
+                Log.info("probe-app: \(bundleID) not running"); return
+            }
+            let appEl = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(appEl, 0.5)
+            if enhance {
+                AXUIElementSetAttributeValue(appEl, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+                usleep(800_000)
+            }
+            guard let el = AX.element(appEl, kAXFocusedUIElementAttribute) else { Log.info("probe-app: no focused element"); return }
+            let text = AX.string(el, kAXValueAttribute) ?? ""
+            let n = (text as NSString).length
+            let frame = AX.frame(el)
+            let area = self.findScrollArea(above: el).flatMap(AX.frame)
+            func b(_ r: NSRange) -> String { r.end <= n && r.length > 0 ? (AX.bounds(for: r, in: el).map { "\($0)" } ?? "nil") : "n/a" }
+            Log.info("probe-app \(bundleID) enhanced=\(enhance) role=\(AX.string(el, kAXRoleAttribute) ?? "?") testField=\(text.hasPrefix("QUILLTEST")) chars=\(n) frame=\(frame.map { "\($0)" } ?? "nil") scrollArea=\(area.map { "\($0)" } ?? "none")")
+            Log.info("probe-app bounds [0,4]=\(b(NSRange(location: 0, length: 4))) [10,5]=\(b(NSRange(location: 10, length: 5))) [last]=\(b(NSRange(location: max(n - 1, 0), length: 1)))")
         }
     }
 
@@ -196,6 +442,7 @@ final class FocusTracker {
     func rect(for range: NSRange, in snap: FieldSnapshot, completion: @escaping (CGRect?) -> Void) {
         queue.async {
             var r = AX.bounds(for: range, in: snap.element)
+            if let rect = r, rect.width >= snap.frame.width * 0.85, snap.frame.width > 120 { r = nil }
             if r == nil || r!.height > 400 {
                 let lastChar = NSRange(location: max(range.end - 1, range.location), length: min(1, range.length))
                 r = AX.bounds(for: lastChar, in: snap.element)
@@ -279,7 +526,7 @@ enum TextReplacer {
             guard let found = nearest(original, in: ns, to: range.location) else { return .failed }
             target = found
         }
-        guard select(el, target) else { return .failed }
+        guard select(el, target), selectionHolds(original, in: el) else { return .failed }
         if !viaPaste, AX.setSelectedText(el, replacement) {
             for _ in 0..<5 {
                 usleep(15_000)
@@ -288,7 +535,16 @@ enum TextReplacer {
             // Reported success but nothing changed; fall back to pasting.
             guard select(el, target) else { return .failed }
         }
+        // Last check right before pasting: still exactly our selection, still the same words.
+        guard AX.range(el, kAXSelectedTextRangeAttribute) == target, selectionHolds(original, in: el) else { return .failed }
         return Paster.paste(replacement) ? .pasted : .failed
+    }
+
+    /// The app agrees the selected text is the words we mean to replace. Editors can count
+    /// offsets differently from their AXValue; this stops a paste from landing elsewhere.
+    static func selectionHolds(_ original: String, in el: AXUIElement) -> Bool {
+        guard let selected = AX.string(el, kAXSelectedTextAttribute) else { return true }  // can't tell; range already checked
+        return LeafMap.normalized(selected) == LeafMap.normalized(original)
     }
 
     static func select(_ el: AXUIElement, _ r: NSRange) -> Bool {

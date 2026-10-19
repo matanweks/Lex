@@ -52,6 +52,16 @@ final class DebugHooks {
                 }
                 Log.info("raw: done")
             }
+        case let c where c.hasPrefix("probe-app:"):
+            engine.tracker.probeApp(bundleID: String(c.dropFirst("probe-app:".count)), enhance: false)
+        case let c where c.hasPrefix("probe-app-enhanced:"):
+            engine.tracker.probeApp(bundleID: String(c.dropFirst("probe-app-enhanced:".count)), enhance: true)
+        case "compare-rects" where textEditFrontmost:
+            if let snap = engine.snapshot { engine.tracker.compareRects(for: engine.issues, in: snap) }
+        case "ax-probe":
+            engine.tracker.probeGeometry(enhance: false)
+        case "ax-probe-enhanced":
+            engine.tracker.probeGeometry(enhance: true)
         case "quality":
             Task { await quality() }
         case "apply-first" where textEditFrontmost:

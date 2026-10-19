@@ -62,6 +62,18 @@ final class EditMapperTests: XCTestCase {
         XCTAssertEqual(fixed as String, "I went to the store today.")
     }
 
+    func testDropsManglingEdits() {
+        let sentence = "the remove fuction is not working that good"
+        let bad = [
+            AIEdit(original: sentence, replacement: "|", kind: .grammar, reason: ""),
+            AIEdit(original: sentence, replacement: "", kind: .grammar, reason: ""),
+            AIEdit(original: "remove fuction is not", replacement: "I", kind: .grammar, reason: ""),
+        ]
+        XCTAssertTrue(EditMapper.issues(for: bad, sentence: sentence, base: 0).isEmpty)
+        let good = [AIEdit(original: "fuction", replacement: "function", kind: .spelling, reason: "")]
+        XCTAssertEqual(EditMapper.issues(for: good, sentence: sentence, base: 0).count, 1)
+    }
+
     func testDropsEditsNotInSentence() {
         let issues = EditMapper.issues(for: [AIEdit(original: "nope", replacement: "yes", kind: .grammar, reason: "")], sentence: "All good here.", base: 0)
         XCTAssertTrue(issues.isEmpty)
@@ -176,6 +188,10 @@ final class ClientParsingTests: XCTestCase {
         XCTAssertEqual(EditLineParser.parse("their | there | word_choice | wrong word"), AIEdit(original: "their", replacement: "there", kind: .wordChoice, reason: "wrong word"))
         XCTAssertEqual(EditLineParser.parse("we needs<TAB>we need<TAB>grammar<TAB>\"we\" takes \"need\"")?.replacement, "we need")
         XCTAssertNil(EditLineParser.parse("Edits:"))
+        XCTAssertEqual(EditLineParser.parse("fuction || function | spelling | typo")?.replacement, "function")
+        XCTAssertEqual(EditLineParser.parse("very |  | clarity | redundant")?.replacement, "")
+        XCTAssertNil(EditLineParser.parse("the remove fuction is not working | | grammar"))
+        XCTAssertEqual(EditLineParser.parse("fuction|function|spelling|typo")?.replacement, "function")
         XCTAssertNil(EditLineParser.parse("OK"))
         XCTAssertNil(EditLineParser.parse(""))
         XCTAssertNil(EditLineParser.parse("just some prose"))

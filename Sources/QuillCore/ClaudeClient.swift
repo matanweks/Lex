@@ -274,6 +274,12 @@ public enum EditLineParser {
         var fields = line.components(separatedBy: "\t")
         if fields.count < 3 { fields = line.components(separatedBy: "<TAB>") }
         if fields.count < 3 { fields = line.components(separatedBy: " | ") }
+        if fields.count < 3 || fields.contains(where: { $0.contains("|") }) {
+            // Doubled or unspaced pipes: split on every pipe, drop empties, and only trust the
+            // result if a real kind lands in the third field.
+            fields = line.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            guard fields.count >= 3, IssueKind(rawValue: fields[2].lowercased()) != nil else { return nil }
+        }
         guard fields.count >= 3 else { return nil }
         let original = fields[0]
         guard !original.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }

@@ -80,7 +80,7 @@ public enum EditMapper {
         var out: [Issue] = []
         for raw in edits {
             let edit = ns.range(of: raw.original).location == NSNotFound ? unquoted(raw) : raw
-            guard !edit.original.isEmpty, edit.original != edit.replacement else { continue }
+            guard !edit.original.isEmpty, edit.original != edit.replacement, isPlausible(edit) else { continue }
             var found = ns.range(of: edit.original, options: [], range: NSRange(location: searchFrom, length: ns.length - searchFrom))
             if found.location == NSNotFound || used.contains(where: { $0.intersects(found) }) {
                 found = ns.range(of: edit.original)
@@ -158,6 +158,18 @@ public enum EditMapper {
         guard i < o.length else { return nil }
         while i < o.length, !isSpace(o.character(at: i)) { i += 1 }
         return i
+    }
+
+    /// Drops edits that would mangle text rather than fix it: words replaced by bare
+    /// punctuation (a stray "|"), or several words deleted or squashed into one.
+    static func isPlausible(_ e: AIEdit) -> Bool {
+        func words(_ s: String) -> Int { s.split(whereSeparator: \.isWhitespace).count }
+        func hasWordChars(_ s: String) -> Bool { s.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) } }
+        let originalWords = words(e.original)
+        if hasWordChars(e.original), !e.replacement.isEmpty, !hasWordChars(e.replacement) { return false }
+        if originalWords >= 3, e.replacement.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        if originalWords >= 4, words(e.replacement) <= 1, e.kind != .clarity { return false }
+        return true
     }
 
     /// Models occasionally quote the fields; strip a matching pair of quotes.

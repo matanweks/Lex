@@ -182,6 +182,8 @@ final class OverlayController {
     private var hoverWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
     private var monitors: [Any] = []
+    private var fieldFrame: CGRect?  // Cocoa coordinates
+    private var cardShownAt = Date.distantPast
 
     init() {
         underlineWindow.ignoresMouseEvents = true
@@ -196,10 +198,15 @@ final class OverlayController {
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] e in self?.mouseMoved(); return e }) {
             monitors.append(m)
         }
+        // A click anywhere else (clicks on the card itself are local events) dismisses the card.
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in self?.hideCard() }) {
+            monitors.append(m)
+        }
     }
 
     func show(issues: [Issue], rects: [String: [CGRect]], field: FieldSnapshot, badge: (count: Int, checking: Bool, aiOn: Bool), showBadge: Bool) {
         items = issues.compactMap { issue in rects[issue.id].map { (issue, $0.map(ScreenGeometry.toCocoa)) } }
+        fieldFrame = ScreenGeometry.toCocoa(field.visible.isEmpty ? field.frame : field.visible)
         if items.isEmpty {
             underlineWindow.orderOut(nil)
             underlineView.items = []
@@ -282,18 +289,31 @@ final class OverlayController {
         underlineView.hoveredID = id
         let view = FirstMouseHostingView(rootView: SuggestionCardView(
             issue: issue,
-            apply: { [weak self] r in self?.hideCard(); self?.onApply?(issue, r) },
+            apply: { [weak self] r in
+                // A click that lands as the card appears was meant for the text underneath.
+                guard let self, Date().timeIntervalSince(self.cardShownAt) > 0.35 else { return }
+                self.hideCard()
+                self.onApply?(issue, r)
+            },
             ignore: { [weak self] in self?.hideCard(); self?.onIgnore?(issue) },
             learn: { [weak self] in self?.hideCard(); self?.onLearn?(issue) }
         ))
         cardPanel.contentView = view
         let size = view.fittingSize
-        var origin = CGPoint(x: anchor.minX - 10, y: anchor.minY - 6 - size.height)
-        if let screen = ScreenGeometry.screen(containing: anchor)?.visibleFrame {
+        let screen = ScreenGeometry.screen(containing: anchor)?.visibleFrame ?? .infinite
+        var origin: CGPoint
+        if let field = fieldFrame, field.height <= 160 {
+            // Message boxes and inputs: open outside the field so the card never sits on top of
+            // text you might click into. Above the field, or below it when there's no room.
+            origin = CGPoint(x: anchor.minX - 10, y: field.maxY + 6)
+            if origin.y + size.height > screen.maxY - 4 { origin.y = field.minY - 6 - size.height }
+        } else {
+            origin = CGPoint(x: anchor.minX - 10, y: anchor.minY - 6 - size.height)
             if origin.y < screen.minY + 4 { origin.y = anchor.maxY + 6 }
-            origin.x = min(max(origin.x, screen.minX + 4), screen.maxX - size.width - 4)
         }
+        origin.x = min(max(origin.x, screen.minX + 4), screen.maxX - size.width - 4)
         cardPanel.setFrame(CGRect(origin: origin, size: size), display: true)
         cardPanel.orderFrontRegardless()
+        cardShownAt = Date()
     }
 }
