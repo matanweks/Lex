@@ -54,6 +54,15 @@ final class EditMapperTests: XCTestCase {
         XCTAssertEqual(fixed as String, "They're going to receive the package tomorrow.")
     }
 
+    func testInsertionPieceHasNoEdgeSpaces() {
+        let sentence = "do you have idea?"
+        let issues = EditMapper.issues(for: [AIEdit(original: "have idea", replacement: "have an idea", kind: .grammar, reason: "")], sentence: sentence, base: 0)
+        XCTAssertEqual(issues.map(\.original), ["have"])
+        XCTAssertEqual(issues.map { $0.replacements[0] }, ["have an"])
+        let fixed = (sentence as NSString).replacingCharacters(in: issues[0].range, with: issues[0].replacements[0])
+        XCTAssertEqual(fixed, "do you have an idea?")
+    }
+
     func testInsertionAnchorsToNeighbourWord() {
         let issues = EditMapper.issues(for: [AIEdit(original: "I went store", replacement: "I went to the store", kind: .grammar, reason: "")], sentence: "I went store today.", base: 0)
         XCTAssertEqual(issues.count, 1)

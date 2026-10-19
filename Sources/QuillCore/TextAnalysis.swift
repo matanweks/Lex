@@ -140,7 +140,18 @@ public enum EditMapper {
                 offset += length
             }
         }
-        return out
+        return out.map(trimSharedSpaces)
+    }
+
+    /// "have " → "have an " becomes "have" → "have an": a fix never starts or ends on a
+    /// space both sides share. Editors report selections without such edge spaces.
+    static func trimSharedSpaces(_ p: (offset: Int, original: String, replacement: String)) -> (offset: Int, original: String, replacement: String) {
+        var o = p.original, r = p.replacement, offset = p.offset
+        while let a = o.last, let b = r.last, a == b, a.isWhitespace, o.count > 1 { o.removeLast(); r.removeLast() }
+        while let a = o.first, let b = r.first, a == b, a.isWhitespace, o.count > 1 {
+            o.removeFirst(); r.removeFirst(); offset += (String(a) as NSString).length
+        }
+        return (offset, o, r)
     }
 
     private static func isSpace(_ c: unichar) -> Bool { c == 0x20 || c == 0x09 || c == 0x0A || c == 0xA0 }

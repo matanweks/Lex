@@ -93,6 +93,13 @@ final class DebugHooks {
                   let issue = EditMapper.issues(for: [AIEdit(original: String(c.dropFirst("remove-word:".count)), replacement: "", kind: .grammar, reason: "test")], sentence: snap.text, base: 0).first
             else { Log.info("word not found"); return }
             engine.apply(issue, replacement: "")
+        case let c where c.hasPrefix("fix:") && c.contains("=>") && textEditFrontmost:
+            // Runs any fix through the real path, as if Claude had suggested it: fix:have idea=>have an idea
+            let parts = String(c.dropFirst(4)).components(separatedBy: "=>")
+            guard let snap = engine.snapshot,
+                  let issue = EditMapper.issues(for: [AIEdit(original: parts[0], replacement: parts[1], kind: .grammar, reason: "test")], sentence: snap.text, base: 0).first
+            else { Log.info("words not found"); return }
+            engine.apply(issue, replacement: issue.replacements[0])
         case "refine" where textEditFrontmost:
             openRefine(.sentence)
         case "refine-accept" where textEditFrontmost:

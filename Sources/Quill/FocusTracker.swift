@@ -518,15 +518,32 @@ enum TextReplacer {
     /// Selects the range through AX, then either writes it through AX (Cocoa apps) or pastes
     /// (web editors, where a raw AX write would bypass the editor and get lost).
     static func replace(element el: AXUIElement, viaPaste: Bool, range: NSRange, original: String, replacement: String) -> FocusTracker.ReplaceOutcome {
-        guard let text = AX.string(el, kAXValueAttribute) else { return .failed }
+        guard let text = AX.string(el, kAXValueAttribute) else { Log.info("refused: field value unreadable"); return .failed }
         let ns = text as NSString
         var target = range
         if target.end > ns.length || ns.substring(with: target) != original {
             // The text moved since we looked; find the closest copy of the original.
-            guard let found = nearest(original, in: ns, to: range.location) else { return .failed }
+            guard let found = nearest(original, in: ns, to: range.location) else { Log.info("refused: words no longer in the field"); return .failed }
             target = found
         }
-        guard select(el, target), selectionHolds(original, in: el) else { return .failed }
+        guard select(el, target) else {
+            Log.info("refused: selection didn't stick (wanted \(target), got \(AX.range(el, kAXSelectedTextRangeAttribute).map { "\($0)" } ?? "nil"))")
+            return .failed
+        }
+        if !selectionHolds(original, in: el, logMismatch: false) {
+            // Some editors (ProseMirror in Electron) count selection offsets differently from
+            // the text they report. Find how far off the selection landed and shift it.
+            guard let selected = AX.string(el, kAXSelectedTextAttribute),
+                  let delta = offsetDelta(selected: selected, in: ns, target: target),
+                  target.location - delta >= 0 else {
+                _ = selectionHolds(original, in: el)  // logs the mismatch
+                return .failed
+            }
+            let corrected = NSRange(location: target.location - delta, length: target.length)
+            guard select(el, corrected), selectionHolds(original, in: el) else { return .failed }
+            Log.info("selection offset corrected by \(delta)")
+            target = corrected
+        }
         if !viaPaste, AX.setSelectedText(el, replacement) {
             for _ in 0..<5 {
                 usleep(15_000)
@@ -536,7 +553,8 @@ enum TextReplacer {
             guard select(el, target) else { return .failed }
         }
         // Last check right before pasting: still exactly our selection, still the same words.
-        guard AX.range(el, kAXSelectedTextRangeAttribute) == target, selectionHolds(original, in: el) else { return .failed }
+        guard AX.range(el, kAXSelectedTextRangeAttribute) == target else { Log.info("refused: selection moved before pasting"); return .failed }
+        guard selectionHolds(original, in: el) else { return .failed }
         if replacement.isEmpty {
             // Editors ignore an empty paste; a removal is a Delete keystroke on the selection.
             Keys.press(0x33)  // delete (backspace)
@@ -547,9 +565,26 @@ enum TextReplacer {
 
     /// The app agrees the selected text is the words we mean to replace. Editors can count
     /// offsets differently from their AXValue; this stops a paste from landing elsewhere.
-    static func selectionHolds(_ original: String, in el: AXUIElement) -> Bool {
+    static func selectionHolds(_ original: String, in el: AXUIElement, logMismatch: Bool = true) -> Bool {
         guard let selected = AX.string(el, kAXSelectedTextAttribute) else { return true }  // can't tell; range already checked
-        return LeafMap.normalized(selected) == LeafMap.normalized(original)
+        // Editors trim edge spaces from the selected text they report; the range was already
+        // checked exactly, so compare the words.
+        let a = LeafMap.normalized(selected).trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = LeafMap.normalized(original).trimmingCharacters(in: .whitespacesAndNewlines)
+        if a != b, logMismatch { Log.info("refused: selected text differs (\((selected as NSString).length) vs \((original as NSString).length) chars)") }
+        return a == b
+    }
+
+    /// How far the editor's selection landed from where we asked: the shift d for which the
+    /// value's text at target+d is what got selected. Small shifts only; the caller re-checks.
+    static func offsetDelta(selected: String, in ns: NSString, target: NSRange) -> Int? {
+        let want = LeafMap.normalized(selected)
+        for d in [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6] {
+            let r = NSRange(location: target.location + d, length: (selected as NSString).length)
+            guard r.location >= 0, r.end <= ns.length else { continue }
+            if LeafMap.normalized(ns.substring(with: r)) == want { return d }
+        }
+        return nil
     }
 
     static func select(_ el: AXUIElement, _ r: NSRange) -> Bool {

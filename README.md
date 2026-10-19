@@ -35,7 +35,7 @@ On first launch:
 ## Notes
 
 - Text you type in checked apps is sent to the Anthropic API with your key. Password fields are never read. Terminals, code editors and password managers are off by default; turn Quill off for any app from the menu-bar icon.
-- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Quill selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name. Before replacing anything, Quill checks that the selected text is exactly the words it means to fix, and aborts otherwise.
+- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Quill selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name. Before replacing anything, Quill checks that the selected text is exactly the words it means to fix, and aborts otherwise. Some editors (the Claude app's composer) count selection offsets one or more characters away from the text they report. Quill detects that shift from what actually got selected, corrects the selection, and checks again before editing.
 - Finding where a word is on screen varies by app. Quill tries, in order, and remembers per field what worked:
   1. the field's own position API (native apps, Chrome);
   2. the text runs inside rich editors (Claude, Slack);
