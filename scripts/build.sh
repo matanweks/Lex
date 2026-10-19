@@ -19,7 +19,13 @@ echo "Signed with: ${IDENTITY:-ad-hoc}"
 
 DEST="$HOME/Applications/Lex.app"
 mkdir -p "$HOME/Applications"
-pkill -x Lex 2>/dev/null && sleep 0.5 || true
+# Quit the running copy and wait until it's really gone: reopening while macOS is still
+# tearing it down can leave the new launch suspended.
+if pkill -x Lex 2>/dev/null; then
+  for _ in $(seq 1 30); do pgrep -x Lex >/dev/null || break; sleep 0.1; done
+  pkill -9 -x Lex 2>/dev/null || true
+  sleep 0.3
+fi
 rm -rf "$DEST"
 ditto "$APP" "$DEST"
 echo "Installed: $DEST"

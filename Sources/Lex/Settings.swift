@@ -71,6 +71,7 @@ struct HotkeyPreset: Identifiable, Equatable {
 
     /// For applying every fix in the field at once.
     static let fixAll: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-section", label: "⌃§", keyCode: UInt32(kVK_ISO_Section), carbonModifiers: UInt32(controlKey), menuKey: "§", menuModifiers: [.control]),
         HotkeyPreset(id: "ctrl-opt-f", label: "⌃⌥F", keyCode: UInt32(kVK_ANSI_F), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "f", menuModifiers: [.control, .option]),
         HotkeyPreset(id: "opt-shift-f", label: "⌥⇧F", keyCode: UInt32(kVK_ANSI_F), carbonModifiers: UInt32(optionKey | shiftKey), menuKey: "f", menuModifiers: [.option, .shift]),
         HotkeyPreset(id: "ctrl-opt-cmd-f", label: "⌃⌥⌘F", keyCode: UInt32(kVK_ANSI_F), carbonModifiers: UInt32(controlKey | optionKey | cmdKey), menuKey: "f", menuModifiers: [.control, .option, .command]),

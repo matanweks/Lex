@@ -62,10 +62,12 @@ final class DebugHooks {
             }
         case let c where c.hasPrefix("speak:"):
             reader.read(String(c.dropFirst(6)))
+        case let c where c.hasPrefix("speak-skip:"):
+            reader.skip(TimeInterval(c.dropFirst("speak-skip:".count)) ?? 0)
         case "speak-stop":
             reader.stop()
         case "speak-state":
-            Log.info("reader: phase=\(reader.model.phase) voice=\(reader.model.voice) chunk \(reader.model.index + 1)/\(reader.model.count) speed=\(reader.model.speed)")
+            Log.info("reader: phase=\(reader.model.phase) voice=\(reader.model.voice) chunk \(reader.model.index + 1)/\(reader.model.count) at \(String(format: "%.1f", reader.position)) s speed=\(reader.model.speed)")
         case "stt-test-apple":
             Task { await sttTest(engine: .apple) }
         case "stt-test-google":

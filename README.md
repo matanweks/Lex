@@ -26,7 +26,7 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
     - **macOS voice:** free, offline; the fallback when no cloud voice is set up.
   - **Speed:** text is split at sentence boundaries into small-then-growing chunks (~90 → 240 → 600 → 1,200 characters). The first audio arrives in about 1.1 s, and the next chunk is fetched while the current one plays. The language is detected, so Hebrew text gets a he-IL voice.
   - **Cost:** audio is cached in `~/Library/Caches/dev.lex.app/speech`, so hearing the same text again is free. Settings shows this month's characters.
-  - **Mini player:** pause, speed (0.8×–2×) and stop.
+  - **Mini player:** pause, 10-second back and forward (across chunks, with Google or ElevenLabs voices), speed (0.8×–2×) and stop.
 
 - **Dictation (like Wispr Flow):** hold **Right ⌥**, talk, let go, and the text is typed at your cursor in any app.
   - **Hands-free:** double-tap the key, then tap once more to finish. Esc cancels.
@@ -37,7 +37,7 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **Tidy-up:** when a transcript has fillers or a spoken correction ("Tuesday, no wait, Wednesday"), or is long, Claude Haiku tidies it, keeping your words and language. If the result strays from the transcript, the raw transcript is used instead. **Words to know** in Settings are passed to both as spelling hints.
   - **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
 
-- **Fix all:** press **⌃⌥F** to apply every correction in the field at once.
+- **Fix all:** press **⌃§** to apply every correction in the field at once.
   - **What's included:** spelling, grammar, punctuation and word choice. Clarity rewrites stay manual. The word you just typed counts too.
   - **Accuracy:** Lex first has Claude check any sentence it hasn't reviewed, waiting up to 2.5 s, so a name only the spell checker flagged isn't "fixed".
   - **How fixes go in:** fixes are applied one by one from the end of the text, so formatting such as @mentions survives. Each waits until the app has taken the previous one, and your clipboard is saved and restored once for the whole batch.
@@ -84,7 +84,7 @@ On first launch:
 `swift test` runs the core tests. With debug logging on, Lex also accepts commands posted as the distributed notification `dev.lex.debug`:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths.
-- `speak:<text>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
+- `speak:<text>`, `speak-skip:<seconds>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 - `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
 
 The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:

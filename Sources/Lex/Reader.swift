@@ -10,6 +10,8 @@ final class ReaderModel: ObservableObject {
     @Published var index = 0
     @Published var count = 0
     @Published var speed = 1.0
+    /// Cloud voices play from audio chunks and can skip; the macOS voice can't.
+    @Published var canSkip = false
 }
 
 /// Reads text aloud. Cloud voices are fetched sentence-group by sentence-group: the first
@@ -21,7 +23,8 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
     let model = ReaderModel()
     private let settings: AppSettings
     private let client: SpeechClient
-    private lazy var hud = ReaderHUD(model: model, onPause: { [weak self] in self?.togglePause() }, onStop: { [weak self] in self?.stop() }, onSpeed: { [weak self] in self?.cycleSpeed() })
+    private lazy var hud = ReaderHUD(model: model, onPause: { [weak self] in self?.togglePause() }, onStop: { [weak self] in self?.stop() },
+                                     onSpeed: { [weak self] in self?.cycleSpeed() }, onSkip: { [weak self] in self?.skip($0) })
     private var chunks: [String] = []
     private var audio: [Int: Data] = [:]
     private var fetching = Set<Int>()
@@ -33,8 +36,14 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
     private var language: String?
     private var toldAboutFallback = false
     private var failedFrom: Int?
+    private var durations: [Int: TimeInterval] = [:]
+    /// Where to start a chunk that's still loading when a skip lands in it.
+    private var pendingOffset: TimeInterval?
 
     var isActive: Bool { model.phase != .idle }
+
+    /// Seconds into the current chunk, for testing.
+    var position: TimeInterval { player?.currentTime ?? pendingOffset ?? 0 }
 
     init(settings: AppSettings, client: SpeechClient) {
         self.settings = settings
@@ -69,6 +78,7 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
 
         chunks = SpeechText.chunks(text)
         model.count = chunks.count
+        model.canSkip = true
         model.voice = provider == .google ? settings.googleVoice : "ElevenLabs"
         model.phase = .loading
         template = SpeechClient.Request(
@@ -90,6 +100,8 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
         audio = [:]
         fetching = []
         failedFrom = nil
+        durations = [:]
+        pendingOffset = nil
         current = 0
         model.phase = .idle
         hud.hide()
@@ -115,6 +127,52 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
         player?.rate = Float(model.speed)
     }
 
+    /// Jumps by `seconds` of audio (negative goes back), across chunk boundaries.
+    func skip(_ seconds: TimeInterval) {
+        guard model.canSkip, !chunks.isEmpty, model.phase != .idle else { return }
+        let wasPaused = model.phase == .paused
+        var i = current
+        var t = (player?.currentTime ?? pendingOffset ?? 0) + seconds
+        while t < 0 {
+            guard i > 0, let d = duration(of: i - 1) else { t = 0; break }
+            i -= 1
+            t += d
+        }
+        while let d = duration(of: i), t >= d {
+            guard i + 1 < chunks.count else { stop(); return }  // skipped past the end
+            t -= d
+            i += 1
+        }
+        if i == current, let player {
+            player.currentTime = t
+            return
+        }
+        player?.stop()
+        player = nil
+        if audio[i] != nil {
+            play(i, at: t)
+            if wasPaused {
+                player?.pause()
+                model.phase = .paused
+            }
+        } else {
+            // Not fetched yet: start there as soon as it arrives.
+            current = i
+            pendingOffset = t
+            model.index = i
+            model.phase = .loading
+            fetch(i)
+            fetch(i + 1)
+        }
+    }
+
+    private func duration(of i: Int) -> TimeInterval? {
+        if let d = durations[i] { return d }
+        guard let data = audio[i], let d = try? AVAudioPlayer(data: data).duration else { return nil }
+        durations[i] = d
+        return d
+    }
+
     // MARK: Cloud voices
 
     private func fetch(_ i: Int) {
@@ -136,7 +194,11 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
                     self.audio[i] = data
                     if !cached { self.settings.addSpeechUsage(text.count, for: request.provider) }
                     if i == 0 { Log.info("first audio in \(Int(Date().timeIntervalSince(started) * 1000)) ms\(cached ? " (cached)" : "")") }
-                    if i == self.current, self.player == nil, self.model.phase == .loading { self.play(i) }
+                    if i == self.current, self.player == nil, self.model.phase == .loading {
+                        let offset = self.pendingOffset ?? 0
+                        self.pendingOffset = nil
+                        self.play(i, at: offset)
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -164,7 +226,7 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
         speakWithSystemVoice(rest)
     }
 
-    private func play(_ i: Int) {
+    private func play(_ i: Int, at offset: TimeInterval = 0) {
         if let failedFrom, i >= failedFrom, audio[i] == nil {
             fallBack(from: i)
             return
@@ -180,12 +242,14 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
             p.enableRate = true
             p.rate = Float(model.speed)
             p.prepareToPlay()
+            durations[i] = p.duration
+            p.currentTime = min(max(offset, 0), max(p.duration - 0.05, 0))
             p.play()
             player = p
             current = i
             model.index = i
             model.phase = .playing
-            audio[i - 1] = nil
+            // Earlier chunks stay in memory (they're small) so skipping back works.
             fetch(i + 1)
             fetch(i + 2)
         } catch {
@@ -218,6 +282,7 @@ final class Reader: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate
         // The synthesizer's rate isn't linear; this keeps 1× natural and 2× brisk but clear.
         utterance.rate = Float(min(max(0.5 + (model.speed - 1) * 0.2, 0.35), 0.7))
         model.voice = utterance.voice?.name ?? "macOS"
+        model.canSkip = false
         Log.info("read aloud: \(text.count) chars via macOS voice \(model.voice) (quality \(utterance.voice?.quality.rawValue ?? 0))")
         model.count = 1
         model.index = 0
@@ -249,6 +314,7 @@ struct ReaderHUDView: View {
     let onPause: () -> Void
     let onStop: () -> Void
     let onSpeed: () -> Void
+    let onSkip: (TimeInterval) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -274,11 +340,21 @@ struct ReaderHUDView: View {
             }
             .buttonStyle(.plain)
             .help("Speed")
+            if model.canSkip {
+                Button { onSkip(-10) } label: { Image(systemName: "gobackward.10").frame(width: 20) }
+                    .buttonStyle(.plain)
+                    .help("Back 10 seconds")
+            }
             Button(action: onPause) {
                 Image(systemName: model.phase == .paused ? "play.fill" : "pause.fill").frame(width: 18)
             }
             .buttonStyle(.plain)
             .disabled(model.phase == .loading)
+            if model.canSkip {
+                Button { onSkip(10) } label: { Image(systemName: "goforward.10").frame(width: 20) }
+                    .buttonStyle(.plain)
+                    .help("Forward 10 seconds")
+            }
             Button(action: onStop) {
                 Image(systemName: "stop.fill").frame(width: 18)
             }
@@ -287,7 +363,7 @@ struct ReaderHUDView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .frame(width: 300)
+        .frame(width: 360)
         .panelBackground(radius: 14)
     }
 
@@ -299,14 +375,14 @@ struct ReaderHUDView: View {
 final class ReaderHUD {
     private let panel = FloatingPanel(level: .statusBar)
 
-    init(model: ReaderModel, onPause: @escaping () -> Void, onStop: @escaping () -> Void, onSpeed: @escaping () -> Void) {
-        panel.contentView = FirstMouseHostingView(rootView: ReaderHUDView(model: model, onPause: onPause, onStop: onStop, onSpeed: onSpeed))
+    init(model: ReaderModel, onPause: @escaping () -> Void, onStop: @escaping () -> Void, onSpeed: @escaping () -> Void, onSkip: @escaping (TimeInterval) -> Void) {
+        panel.contentView = FirstMouseHostingView(rootView: ReaderHUDView(model: model, onPause: onPause, onStop: onStop, onSpeed: onSpeed, onSkip: onSkip))
     }
 
     /// Bottom centre of the screen you're working on, clear of the Dock.
     func show() {
         guard !panel.isVisible else { return }
-        let size = panel.contentView?.fittingSize ?? CGSize(width: 300, height: 48)
+        let size = panel.contentView?.fittingSize ?? CGSize(width: 360, height: 48)
         let mouse = NSEvent.mouseLocation
         let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
         panel.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.minY + 40, width: size.width, height: size.height), display: true)
