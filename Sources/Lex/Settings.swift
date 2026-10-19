@@ -1,16 +1,16 @@
 import AppKit
 import Carbon.HIToolbox
 import Combine
-import QuillCore
+import LexCore
 import ServiceManagement
 import Security
 import SwiftUI
 
 enum Keychain {
-    static let service = "dev.quill.app"
+    static let service = "dev.lex.app"
     static let account = "anthropic-api-key"
 
-    static func read() -> String? {
+    static func read(service: String = service) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -78,6 +78,7 @@ final class AppSettings: ObservableObject {
     @Published private(set) var hasAPIKey = false
 
     init() {
+        Self.migrateFromQuill(into: defaults)
         defaults.register(defaults: [
             "enabled": true,
             "liveModel": ClaudeModel.haiku.rawValue,
@@ -93,6 +94,29 @@ final class AppSettings: ObservableObject {
         showBadge = defaults.bool(forKey: "showBadge")
         excludedApps = defaults.stringArray(forKey: "excludedApps") ?? Self.defaultExcluded
         hasAPIKey = !(apiKey() ?? "").isEmpty
+    }
+
+    /// Lex used to be called Quill (bundle dev.quill.app). Once, copy its settings and API key
+    /// so the rename costs nothing but the Accessibility grant, which macOS ties to the app.
+    /// Reading the old Keychain item may show a one-time "Lex wants to use…" prompt.
+    private static func migrateFromQuill(into defaults: UserDefaults) {
+        guard !defaults.bool(forKey: "migratedFromQuill") else { return }
+        defaults.set(true, forKey: "migratedFromQuill")
+        var copied: [String] = []
+        if let old = UserDefaults(suiteName: "dev.quill.app") {
+            for key in ["enabled", "liveModel", "refineModel", "hotkey", "showBadge", "excludedApps", "debugLog"] {
+                if let value = old.object(forKey: key), defaults.object(forKey: key) == nil {
+                    defaults.set(value, forKey: key)
+                    copied.append(key)
+                }
+            }
+        }
+        var key = false
+        if Keychain.read() == nil, let oldKey = Keychain.read(service: "dev.quill.app"), !oldKey.isEmpty {
+            Keychain.write(oldKey)
+            key = true
+        }
+        Log.info("migrated from Quill: settings \(copied), api key \(key)")
     }
 
     var liveModel: ClaudeModel? { ClaudeModel(rawValue: liveModelID) }
@@ -180,7 +204,7 @@ struct SettingsView: View {
             } header: {
                 Text("Anthropic API key")
             } footer: {
-                Text("Text you type in checked apps is sent to the Anthropic API with this key. Quill never reads password fields.")
+                Text("Text you type in checked apps is sent to the Anthropic API with this key. Lex never reads password fields.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -199,7 +223,7 @@ struct SettingsView: View {
                     ForEach(HotkeyPreset.all) { Text($0.label).tag($0.id) }
                 }
                 Toggle("Show the issue badge next to the text field", isOn: $settings.showBadge)
-                Toggle("Open Quill at login", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
+                Toggle("Open Lex at login", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
             }
 
             Section {
@@ -220,7 +244,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("Apps Quill stays out of")
+                Text("Apps Lex stays out of")
             } footer: {
                 Text("Add an app from the menu bar icon while you're in it.").font(.caption).foregroundStyle(.secondary)
             }

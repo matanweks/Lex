@@ -1,10 +1,10 @@
 import Foundation
 
 /// Timings and counts only. Never logs what the user typed.
-/// File logging is opt-in: `defaults write dev.quill.app debugLog -bool true`.
+/// File logging is opt-in: `defaults write dev.lex.app debugLog -bool true`.
 enum Log {
-    static let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Quill.log")
-    private static let queue = DispatchQueue(label: "quill.log")
+    static let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Lex.log")
+    private static let queue = DispatchQueue(label: "lex.log")
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"

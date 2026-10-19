@@ -1,5 +1,5 @@
 import XCTest
-@testable import QuillCore
+@testable import LexCore
 
 final class SentenceSplitterTests: XCTestCase {
     func testSplitsAndMarksCompletion() {

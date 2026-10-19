@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A panel that floats over every app without ever activating Quill, so the app you're
+/// A panel that floats over every app without ever activating Lex, so the app you're
 /// typing in keeps its focus and caret.
 class FloatingPanel: NSPanel {
     private let keyable: Bool
@@ -36,7 +36,7 @@ struct VisualEffect: NSViewRepresentable {
         let v = NSVisualEffectView()
         v.material = material
         v.blendingMode = .behindWindow
-        v.state = .active  // Quill is never the active app, so force the vibrant look.
+        v.state = .active  // Lex is never the active app, so force the vibrant look.
         return v
     }
 

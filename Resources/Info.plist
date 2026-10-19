@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>dev.quill.app</string>
+    <string>dev.lex.app</string>
     <key>CFBundleName</key>
-    <string>Quill</string>
+    <string>Lex</string>
     <key>CFBundleDisplayName</key>
-    <string>Quill</string>
+    <string>Lex</string>
     <key>CFBundleExecutable</key>
-    <string>Quill</string>
+    <string>Lex</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

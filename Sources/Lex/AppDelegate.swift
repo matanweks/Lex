@@ -1,6 +1,6 @@
 import AppKit
 import Combine
-import QuillCore
+import LexCore
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateIcon() {
         let symbol = !settings.enabled ? "pencil.slash" : (AX.isTrusted ? "pencil.line" : "exclamationmark.triangle")
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Quill")
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Lex")
         image?.isTemplate = true
         statusItem?.button?.image = image
     }
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refineItem.keyEquivalent = settings.hotkey.menuKey
         refineItem.keyEquivalentModifierMask = settings.hotkey.menuModifiers
         menu.addItem(refineItem)
-        menu.addItem(item(settings.enabled ? "Pause Quill" : "Resume Quill", #selector(togglePaused)))
+        menu.addItem(item(settings.enabled ? "Pause Lex" : "Resume Lex", #selector(togglePaused)))
         if let app = engine.lastTargetApp {
             let excluded = settings.excludedApps.contains(app.bundleID)
             let toggle = item(excluded ? "Turn On in \(app.name)" : "Turn Off in \(app.name)", #selector(toggleApp))
@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let settingsItem = item("Settings…", #selector(openSettingsFromMenu))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
-        let quit = NSMenuItem(title: "Quit Quill", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Lex", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
 
@@ -178,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func openSettings() {
         if settingsWindow == nil {
             let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client)))
-            window.title = "Quill Settings"
+            window.title = "Lex Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
             window.center()

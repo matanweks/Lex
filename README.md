@@ -1,4 +1,4 @@
-# Quill
+# Lex
 
 A personal Grammarly for macOS: checks what you type in any app, and refines a sentence the moment you finish it.
 
@@ -26,17 +26,17 @@ Hover an underline to see the fix and apply it with a click. In message boxes an
 ./scripts/build.sh --open
 ```
 
-The script builds a release binary, wraps it as `Quill.app`, signs it with your Apple Development identity and installs it to `~/Applications`. A stable signature keeps the Accessibility grant and Keychain access across rebuilds.
+The script builds a release binary, wraps it as `Lex.app`, signs it with your Apple Development identity and installs it to `~/Applications`. A stable signature keeps the Accessibility grant and Keychain access across rebuilds.
 
 On first launch:
-1. Allow Quill under System Settings › Privacy & Security › Accessibility.
+1. Allow Lex under System Settings › Privacy & Security › Accessibility.
 2. Paste an Anthropic API key in Settings (it's stored in your Keychain), then click **Test connection**.
 
 ## Notes
 
-- Text you type in checked apps is sent to the Anthropic API with your key. Password fields are never read. Terminals, code editors and password managers are off by default; turn Quill off for any app from the menu-bar icon.
-- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Quill selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name. Before replacing anything, Quill checks that the selected text is exactly the words it means to fix, and aborts otherwise. Some editors (the Claude app's composer) count selection offsets one or more characters away from the text they report. Quill detects that shift from what actually got selected, corrects the selection, and checks again before editing.
-- Finding where a word is on screen varies by app. Quill tries, in order, and remembers per field what worked:
+- Text you type in checked apps is sent to the Anthropic API with your key. Password fields are never read. Terminals, code editors and password managers are off by default; turn Lex off for any app from the menu-bar icon.
+- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Lex selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name. Before replacing anything, Lex checks that the selected text is exactly the words it means to fix, and aborts otherwise. Some editors (the Claude app's composer) count selection offsets one or more characters away from the text they report. Lex detects that shift from what actually got selected, corrects the selection, and checks again before editing.
+- Finding where a word is on screen varies by app. Lex tries, in order, and remembers per field what worked:
   1. the field's own position API (native apps, Chrome);
   2. the text runs inside rich editors (Claude, Slack);
   3. text markers;
@@ -45,15 +45,15 @@ On first launch:
   Positions that cover the whole field are rejected. Where nothing works, the badge still shows the issue count and refine still works.
 - Suggestions that would mangle text, such as several words replaced by nothing or by bare punctuation, are dropped.
 - Removing a word takes one neighbouring space with it. In paste-based apps, the removal is a Delete keystroke on the verified selection, since editors ignore an empty paste. Placeholders like "(remove)" in Claude's answer count as deletions, and when Claude corrects itself mid-answer, the later fix wins.
-- Debug log (timings and counts only, never your text): `defaults write dev.quill.app debugLog -bool true`, then see `~/Library/Logs/Quill.log`.
+- Debug log (timings and counts only, never your text): `defaults write dev.lex.app debugLog -bool true`, then see `~/Library/Logs/Lex.log`.
 
 ## Testing
 
-`swift test` runs the core tests. With debug logging on, Quill also accepts commands posted as the distributed notification `dev.quill.debug`:
+`swift test` runs the core tests. With debug logging on, Lex also accepts commands posted as the distributed notification `dev.lex.debug`:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first` and `refine-accept` drive the real fix and refine paths.
 
-The field commands only act on TextEdit, or on text that starts with `QUILLTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
+The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
 
 | | First underline or word | Full answer |
 |---|---|---|
@@ -64,5 +64,5 @@ The field commands only act on TextEdit, or on text that starts with `QUILLTEST`
 
 ## Layout
 
-- `Sources/QuillCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
-- `Sources/Quill`: Accessibility tracking, overlay, suggestion card, refine panel, hotkey, settings.
+- `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, hotkey, settings.

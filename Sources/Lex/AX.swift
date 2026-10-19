@@ -299,7 +299,7 @@ enum HitTest {
     }
 }
 
-/// Rich editors (ProseMirror, Slate, Quill.js) inside Electron often can't place a range of
+/// Rich editors (ProseMirror, Slate, Lex.js) inside Electron often can't place a range of
 /// their own text, while the static-text runs inside them can. Maps the field's character
 /// offsets onto those runs so each word is asked of the run that holds it.
 final class LeafMap {

@@ -12,7 +12,7 @@ final class HotKey {
     init?(keyCode: UInt32, modifiers: UInt32, id: UInt32 = 1, handler: @escaping () -> Void) {
         self.id = id
         HotKey.installHandlerIfNeeded()
-        let hotKeyID = EventHotKeyID(signature: OSType(0x5155_494C), id: id)  // 'QUIL'
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4C45_5820), id: id)  // 'LEX '
         guard RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref) == noErr else { return nil }
         HotKey.handlers[id] = handler
     }

@@ -1,5 +1,5 @@
 import AppKit
-import QuillCore
+import LexCore
 
 /// Runs the checking pipeline for whatever field has focus:
 /// macOS spell/grammar on every keystroke (instant), Claude per sentence the moment
@@ -59,7 +59,7 @@ final class Engine {
 
     var isChecking: Bool { !aiInFlight.isEmpty }
 
-    /// While the refine panel is up, or when the user pauses Quill.
+    /// While the refine panel is up, or when the user pauses Lex.
     func setPaused(_ paused: Bool) {
         self.paused = paused
         tracker.setPaused(paused || !settings.enabled)

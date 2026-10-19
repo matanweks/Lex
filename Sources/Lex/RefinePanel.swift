@@ -1,6 +1,6 @@
 import AppKit
 import Combine
-import QuillCore
+import LexCore
 import SwiftUI
 
 final class RefineModel: ObservableObject {

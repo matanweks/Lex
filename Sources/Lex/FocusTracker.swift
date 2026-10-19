@@ -1,5 +1,5 @@
 import AppKit
-import QuillCore
+import LexCore
 
 /// The focused text field in the frontmost app, as of one poll.
 struct FieldSnapshot {
@@ -28,7 +28,7 @@ struct TrackerUpdate {
 /// Polls the focused element every 100 ms on its own queue. Polling is what works across
 /// Cocoa, Chromium and Electron alike; AX notifications are unreliable in web views.
 final class FocusTracker {
-    let queue = DispatchQueue(label: "quill.ax", qos: .userInteractive)
+    let queue = DispatchQueue(label: "lex.ax", qos: .userInteractive)
     var onUpdate: ((TrackerUpdate) -> Void)?
 
     static let chromiumBrowsers: Set<String> = [
@@ -415,7 +415,7 @@ final class FocusTracker {
     }
 
     /// Debug: geometry of the focused field in a given (possibly background) app.
-    /// Read-only, numbers only; reports whether the field is a QUILLTEST field without logging text.
+    /// Read-only, numbers only; reports whether the field is a LEXTEST field without logging text.
     func probeApp(bundleID: String, enhance: Bool) {
         queue.async {
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
@@ -433,7 +433,7 @@ final class FocusTracker {
             let frame = AX.frame(el)
             let area = self.findScrollArea(above: el).flatMap(AX.frame)
             func b(_ r: NSRange) -> String { r.end <= n && r.length > 0 ? (AX.bounds(for: r, in: el).map { "\($0)" } ?? "nil") : "n/a" }
-            Log.info("probe-app \(bundleID) enhanced=\(enhance) role=\(AX.string(el, kAXRoleAttribute) ?? "?") testField=\(text.hasPrefix("QUILLTEST")) chars=\(n) frame=\(frame.map { "\($0)" } ?? "nil") scrollArea=\(area.map { "\($0)" } ?? "none")")
+            Log.info("probe-app \(bundleID) enhanced=\(enhance) role=\(AX.string(el, kAXRoleAttribute) ?? "?") testField=\(text.hasPrefix("LEXTEST")) chars=\(n) frame=\(frame.map { "\($0)" } ?? "nil") scrollArea=\(area.map { "\($0)" } ?? "none")")
             Log.info("probe-app bounds [0,4]=\(b(NSRange(location: 0, length: 4))) [10,5]=\(b(NSRange(location: 10, length: 5))) [last]=\(b(NSRange(location: max(n - 1, 0), length: 1)))")
         }
     }

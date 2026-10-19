@@ -1,8 +1,8 @@
 import AppKit
-import QuillCore
+import LexCore
 
-/// Test hooks so Quill can be driven from a script:
-///   post the distributed notification "dev.quill.debug" with a command as its object.
+/// Test hooks so Lex can be driven from a script:
+///   post the distributed notification "dev.lex.debug" with a command as its object.
 /// Only installed when debug logging is on. Commands that touch a text field only act
 /// when TextEdit is frontmost, so a stray trigger can never edit a real conversation.
 final class DebugHooks {
@@ -19,17 +19,17 @@ final class DebugHooks {
     }
 
     func install() {
-        DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("dev.quill.debug"), object: nil, queue: .main) { [weak self] note in
+        DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("dev.lex.debug"), object: nil, queue: .main) { [weak self] note in
             self?.run(note.object as? String ?? "")
         }
         Log.info("debug hooks installed")
     }
 
-    /// The tracked field is a test field: in TextEdit, or text starting with the QUILLTEST marker
+    /// The tracked field is a test field: in TextEdit, or text starting with the LEXTEST marker
     /// (the local test pages). Never a field the user is really writing in.
     private var textEditFrontmost: Bool {
         guard let snap = engine.snapshot else { return false }
-        return snap.bundleID == "com.apple.TextEdit" || snap.text.hasPrefix("QUILLTEST")
+        return snap.bundleID == "com.apple.TextEdit" || snap.text.hasPrefix("LEXTEST")
     }
 
     private func run(_ command: String) {
