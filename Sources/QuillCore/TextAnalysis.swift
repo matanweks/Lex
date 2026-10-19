@@ -98,7 +98,8 @@ public enum EditMapper {
             } else {
                 pieces = [narrow(original: edit.original, replacement: edit.replacement, at: found)]
             }
-            for piece in pieces where piece.range.length > 0 {
+            for var piece in pieces where piece.range.length > 0 {
+                if piece.replacement.isEmpty { piece = absorbSpace(piece, in: ns) }
                 out.append(Issue(
                     range: NSRange(location: base + piece.range.location, length: piece.range.length),
                     original: piece.original,
@@ -158,6 +159,22 @@ public enum EditMapper {
         guard i < o.length else { return nil }
         while i < o.length, !isSpace(o.character(at: i)) { i += 1 }
         return i
+    }
+
+    /// Removing a word should also remove one space next to it, or the text is left with
+    /// a double space ("still bla doesn't" → "still doesn't").
+    static func absorbSpace(_ piece: (range: NSRange, original: String, replacement: String), in ns: NSString) -> (range: NSRange, original: String, replacement: String) {
+        let r = piece.range
+        guard let first = piece.original.first, let last = piece.original.last, !first.isWhitespace, !last.isWhitespace else { return piece }
+        var grown = r
+        if r.end < ns.length, ns.character(at: r.end) == 0x20 {
+            grown = NSRange(location: r.location, length: r.length + 1)
+        } else if r.location > 0, ns.character(at: r.location - 1) == 0x20 {
+            grown = NSRange(location: r.location - 1, length: r.length + 1)
+        } else {
+            return piece
+        }
+        return (grown, ns.substring(with: grown), "")
     }
 
     /// Drops edits that would mangle text rather than fix it: words replaced by bare

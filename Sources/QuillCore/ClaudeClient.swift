@@ -153,7 +153,7 @@ public final class ClaudeClient: @unchecked Sendable {
             drain(final: false)
         }
         drain(final: true)
-        return edits
+        return EditLineParser.resolve(edits)
     }
 
     /// Streams a rewrite. `onText` gets the full text so far after every delta.
@@ -285,6 +285,30 @@ public enum EditLineParser {
         guard !original.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         let kind = IssueKind(rawValue: fields[2].trimmingCharacters(in: .whitespaces).lowercased()) ?? .grammar
         let reason = fields.count > 3 ? fields[3...].joined(separator: " ").trimmingCharacters(in: .whitespaces) : ""
-        return AIEdit(original: original, replacement: fields[1], kind: kind, reason: reason)
+        return AIEdit(original: original, replacement: isDeletionPlaceholder(fields[1]) ? "" : fields[1], kind: kind, reason: reason)
+    }
+
+    /// When the model corrects itself mid-reply ("bla | blah", later "bla |  |"), the later
+    /// answer for the same words wins. Identical repeats are kept (the same typo twice).
+    public static func resolve(_ edits: [AIEdit]) -> [AIEdit] {
+        var out: [AIEdit] = []
+        for e in edits {
+            if let i = out.firstIndex(where: { $0.original == e.original && $0.replacement != e.replacement }) {
+                out[i] = e
+            } else {
+                out.append(e)
+            }
+        }
+        return out
+    }
+
+    /// Models sometimes write "(remove)" or "[delete]" where the replacement should be empty.
+    /// Only bracketed forms count, so a real word like "remove" stays a normal suggestion.
+    static func isDeletionPlaceholder(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespaces).lowercased()
+        guard t.count >= 3, let open = t.first, let close = t.last,
+              ["()", "[]", "<>", "{}"].contains(String([open, close])) else { return false }
+        let inner = t.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+        return ["remove", "removed", "delete", "deleted", "none", "empty", "nothing", "omit", "omitted", "drop", "blank", "remove it", "delete it", "remove word", "delete word"].contains(inner)
     }
 }

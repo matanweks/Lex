@@ -37,6 +37,25 @@ final class DebugHooks {
         switch command {
         case "benchmark":
             Task { await benchmark() }
+        case let c where c.hasPrefix("raw:"):
+            // Claude's exact check output for a sample sentence (passed in by the tester).
+            let sentence = String(c.dropFirst(4))
+            Task {
+                var body: [String: Any] = [
+                    "model": ClaudeModel.haiku.rawValue, "max_tokens": 1024,
+                    "system": [["type": "text", "text": Prompts.checkSystem, "cache_control": ["type": "ephemeral"]]],
+                    "messages": [["role": "user", "content": Prompts.checkUser(sentence: sentence, before: "", finished: true)]],
+                ]
+                var betas: [String] = []
+                ClaudeModel.haiku.applyLowLatency(to: &body, betas: &betas)
+                for _ in 0..<3 {
+                    let t = try? await client.timed(body: body, betas: betas)
+                    Log.info("raw | \(t?.text.debugDescription ?? "error")")
+                }
+                Log.info("raw: done")
+            }
+        case "think-bench":
+            Task { await thinkBench() }
         case "raw":
             Task {
                 for s in ["The quarterly numbers looks good but we needs to improve retention.", "We should of left earlier, however we didnt."] {
@@ -68,6 +87,12 @@ final class DebugHooks {
             guard let issue = engine.issues.first, let fix = issue.replacements.first else { Log.info("no issue to apply"); return }
             Log.info("applying \(issue.kind.rawValue) fix")
             engine.apply(issue, replacement: fix)
+        case let c where c.hasPrefix("remove-word:") && textEditFrontmost:
+            // Runs a removal through the real fix path, as if Claude had suggested deleting the word.
+            guard let snap = engine.snapshot,
+                  let issue = EditMapper.issues(for: [AIEdit(original: String(c.dropFirst("remove-word:".count)), replacement: "", kind: .grammar, reason: "test")], sentence: snap.text, base: 0).first
+            else { Log.info("word not found"); return }
+            engine.apply(issue, replacement: "")
         case "refine" where textEditFrontmost:
             openRefine(.sentence)
         case "refine-accept" where textEditFrontmost:
@@ -152,6 +177,36 @@ final class DebugHooks {
             }
         }
         Log.info("benchmark: done")
+    }
+
+    /// Haiku with thinking off vs adaptive thinking at low effort: speed, and how often the
+    /// reply contains lines that aren't edits (thinking out loud). Sample text only.
+    private func thinkBench() async {
+        let samples = Self.sentences + ["Remove function still bla doesnt work.", "I has a apple and it are red.", "We should of left earlier, however we didnt."]
+        for thinking in [false, true] {
+            var totals: [Double] = [], firsts: [Double] = []
+            var noisy = 0, runs = 0, edits = 0
+            for _ in 0..<2 {
+                for s in samples {
+                    var body: [String: Any] = [
+                        "model": ClaudeModel.haiku.rawValue, "max_tokens": 2048,
+                        "system": [["type": "text", "text": Prompts.checkSystem, "cache_control": ["type": "ephemeral"]]],
+                        "messages": [["role": "user", "content": Prompts.checkUser(sentence: s, before: "", finished: true)]],
+                        "output_config": ["effort": "low"],
+                    ]
+                    if !thinking { body["thinking"] = ["type": "disabled"] }
+                    guard let t = try? await client.timed(body: body, betas: []) else { continue }
+                    runs += 1
+                    totals.append(t.total); firsts.append(t.firstText)
+                    let lines = t.text.split(separator: "\n").map(String.init).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    let parsed = lines.compactMap(EditLineParser.parse)
+                    edits += parsed.count
+                    if lines.contains(where: { $0.trimmingCharacters(in: .whitespaces) != "OK" && EditLineParser.parse($0) == nil }) { noisy += 1 }
+                }
+            }
+            Log.info("think-bench thinking=\(thinking ? "adaptive/low" : "off"): total \(Self.median(totals)) ms | first text \(Self.median(firsts)) ms | noisy replies \(noisy)/\(runs) | edit lines \(edits)")
+        }
+        Log.info("think-bench: done")
     }
 
     /// Logs what each model flags on fixed sample sentences (sample text only).

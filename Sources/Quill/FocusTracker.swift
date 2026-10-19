@@ -537,6 +537,11 @@ enum TextReplacer {
         }
         // Last check right before pasting: still exactly our selection, still the same words.
         guard AX.range(el, kAXSelectedTextRangeAttribute) == target, selectionHolds(original, in: el) else { return .failed }
+        if replacement.isEmpty {
+            // Editors ignore an empty paste; a removal is a Delete keystroke on the selection.
+            Keys.press(0x33)  // delete (backspace)
+            return .pasted
+        }
         return Paster.paste(replacement) ? .pasted : .failed
     }
 
@@ -571,6 +576,19 @@ enum TextReplacer {
     }
 }
 
+enum Keys {
+    /// Posts one key press (virtual key code) to the frontmost app, with no modifiers.
+    static func press(_ key: CGKeyCode, flags: CGEventFlags = []) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+        down?.flags = flags
+        up?.flags = flags
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+}
+
 enum Paster {
     /// Pastes `string` into the frontmost app and puts the user's clipboard back afterwards.
     static func paste(_ string: String) -> Bool {
@@ -587,13 +605,7 @@ enum Paster {
         guard pb.writeObjects([item]) else { return false }
         let ours = pb.changeCount
 
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let down = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)  // V
-        let up = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-        down?.flags = .maskCommand
-        up?.flags = .maskCommand
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
+        Keys.press(0x09, flags: .maskCommand)  // ⌘V
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             guard pb.changeCount == ours else { return }  // the user copied something since

@@ -74,6 +74,17 @@ final class EditMapperTests: XCTestCase {
         XCTAssertEqual(EditMapper.issues(for: good, sentence: sentence, base: 0).count, 1)
     }
 
+    func testRemovingAWordTakesOneSpace() {
+        func apply(_ sentence: String, _ word: String, _ replacement: String = "") -> String {
+            let issues = EditMapper.issues(for: [AIEdit(original: word, replacement: replacement, kind: .grammar, reason: "")], sentence: sentence, base: 0)
+            guard let i = issues.first else { return "no issue" }
+            return (sentence as NSString).replacingCharacters(in: i.range, with: i.replacements[0])
+        }
+        XCTAssertEqual(apply("Remove function still bla doesn't work", "bla"), "Remove function still doesn't work")
+        XCTAssertEqual(apply("It works bla", "bla"), "It works")
+        XCTAssertEqual(apply("We need the the plan.", "the the", "the"), "We need the plan.")
+    }
+
     func testDropsEditsNotInSentence() {
         let issues = EditMapper.issues(for: [AIEdit(original: "nope", replacement: "yes", kind: .grammar, reason: "")], sentence: "All good here.", base: 0)
         XCTAssertTrue(issues.isEmpty)
@@ -188,6 +199,9 @@ final class ClientParsingTests: XCTestCase {
         XCTAssertEqual(EditLineParser.parse("their | there | word_choice | wrong word"), AIEdit(original: "their", replacement: "there", kind: .wordChoice, reason: "wrong word"))
         XCTAssertEqual(EditLineParser.parse("we needs<TAB>we need<TAB>grammar<TAB>\"we\" takes \"need\"")?.replacement, "we need")
         XCTAssertNil(EditLineParser.parse("Edits:"))
+        XCTAssertEqual(EditLineParser.parse("bla | (remove) | grammar | stray word")?.replacement, "")
+        XCTAssertEqual(EditLineParser.parse("bla | [Delete] | grammar | stray word")?.replacement, "")
+        XCTAssertEqual(EditLineParser.parse("erase | remove | word_choice | better verb")?.replacement, "remove")
         XCTAssertEqual(EditLineParser.parse("fuction || function | spelling | typo")?.replacement, "function")
         XCTAssertEqual(EditLineParser.parse("very |  | clarity | redundant")?.replacement, "")
         XCTAssertNil(EditLineParser.parse("the remove fuction is not working | | grammar"))
@@ -195,6 +209,16 @@ final class ClientParsingTests: XCTestCase {
         XCTAssertNil(EditLineParser.parse("OK"))
         XCTAssertNil(EditLineParser.parse(""))
         XCTAssertNil(EditLineParser.parse("just some prose"))
+    }
+
+    func testLaterSelfCorrectionWins() {
+        let resolved = EditLineParser.resolve([
+            AIEdit(original: "bla", replacement: "blah", kind: .spelling, reason: ""),
+            AIEdit(original: "doesnt", replacement: "doesn't", kind: .spelling, reason: ""),
+            AIEdit(original: "bla", replacement: "", kind: .grammar, reason: "stray word"),
+            AIEdit(original: "doesnt", replacement: "doesn't", kind: .spelling, reason: ""),
+        ])
+        XCTAssertEqual(resolved.map(\.replacement), ["", "doesn't", "doesn't"])
     }
 
     func testQuotedOriginalsStillMap() {

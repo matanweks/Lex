@@ -44,6 +44,7 @@ On first launch:
   5. hit-testing.
   Positions that cover the whole field are rejected. Where nothing works, the badge still shows the issue count and refine still works.
 - Suggestions that would mangle text, such as several words replaced by nothing or by bare punctuation, are dropped.
+- Removing a word takes one neighbouring space with it. In paste-based apps, the removal is a Delete keystroke on the verified selection, since editors ignore an empty paste. Placeholders like "(remove)" in Claude's answer count as deletions, and when Claude corrects itself mid-answer, the later fix wins.
 - Debug log (timings and counts only, never your text): `defaults write dev.quill.app debugLog -bool true`, then see `~/Library/Logs/Quill.log`.
 
 ## Testing

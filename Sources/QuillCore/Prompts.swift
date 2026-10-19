@@ -20,6 +20,7 @@ public enum Prompts {
     - One edit per mistake. Never return the whole sentence as a single edit.
     - "original" is copied verbatim from SENTENCE, character for character. Keep it as short as possible while it still occurs only once in SENTENCE (add a neighboring word if needed). Never quote text from BEFORE.
     - To insert something, such as a missing comma or word, include the neighboring word in both fields: original "However we" becomes replacement "However, we".
+    - To delete text, leave "replacement" empty: original |  | kind | reason. Never write words like "(remove)" in it.
     - "replacement" replaces exactly "original". Don't repeat surrounding text that isn't in "original".
     - "reason" is at most 8 words, plain and specific.
 
