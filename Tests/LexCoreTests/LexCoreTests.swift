@@ -193,6 +193,21 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(issues.map(\.original), ["shipz", "realy"])
     }
 
+    func testFixAllPicksCorrectionsLastFirstWithoutOverlaps() {
+        func issue(_ loc: Int, _ len: Int, _ kind: IssueKind, _ fix: [String]) -> Issue {
+            Issue(range: NSRange(location: loc, length: len), original: "x", replacements: fix, kind: kind, message: "", source: .ai)
+        }
+        let picked = IssueComposer.fixes([
+            issue(0, 5, .spelling, ["teh"]),
+            issue(10, 4, .clarity, ["shorter"]),      // style: left for the user
+            issue(20, 3, .grammar, []),               // nothing to apply
+            issue(30, 6, .punctuation, ["a,"]),
+            issue(33, 5, .spelling, ["b"]),           // overlaps the previous one
+            issue(50, 2, .wordChoice, ["there"]),
+        ])
+        XCTAssertEqual(picked.map(\.range.location), [50, 30, 0])
+    }
+
     func testShiftKeepsIssuesAfterEdit() {
         let issue = Issue(range: NSRange(location: 10, length: 3), original: "teh", replacements: ["the"], kind: .spelling, message: "", source: .local)
         let shifted = IssueComposer.shift([issue], from: "Hello all teh", to: "Hello you all teh")

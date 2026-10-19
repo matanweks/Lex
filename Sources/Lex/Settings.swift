@@ -68,6 +68,15 @@ struct HotkeyPreset: Identifiable, Equatable {
     ]
 
     static func findSpeak(_ id: String) -> HotkeyPreset { speak.first { $0.id == id } ?? speak[0] }
+
+    /// For applying every fix in the field at once.
+    static let fixAll: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-opt-f", label: "⌃⌥F", keyCode: UInt32(kVK_ANSI_F), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "f", menuModifiers: [.control, .option]),
+        HotkeyPreset(id: "opt-shift-f", label: "⌥⇧F", keyCode: UInt32(kVK_ANSI_F), carbonModifiers: UInt32(optionKey | shiftKey), menuKey: "f", menuModifiers: [.option, .shift]),
+        HotkeyPreset(id: "ctrl-opt-cmd-f", label: "⌃⌥⌘F", keyCode: UInt32(kVK_ANSI_F), carbonModifiers: UInt32(controlKey | optionKey | cmdKey), menuKey: "f", menuModifiers: [.control, .option, .command]),
+    ]
+
+    static func findFixAll(_ id: String) -> HotkeyPreset { fixAll.first { $0.id == id } ?? fixAll[0] }
 }
 
 final class AppSettings: ObservableObject {
@@ -98,6 +107,7 @@ final class AppSettings: ObservableObject {
     @Published var elevenModelID: String { didSet { defaults.set(elevenModelID, forKey: "elevenModel") } }
     @Published var speechSpeed: Double { didSet { defaults.set(speechSpeed, forKey: "speechSpeed") } }
     @Published var speakHotkeyID: String { didSet { defaults.set(speakHotkeyID, forKey: "speakHotkey") } }
+    @Published var fixAllHotkeyID: String { didSet { defaults.set(fixAllHotkeyID, forKey: "fixAllHotkey") } }
     @Published private(set) var hasGoogleKey = false
 
     // Dictation
@@ -124,6 +134,7 @@ final class AppSettings: ObservableObject {
             "elevenModel": ElevenLabsTTS.Model.flash.rawValue,
             "speechSpeed": 1.0,
             "speakHotkey": HotkeyPreset.speak[0].id,
+            "fixAllHotkey": HotkeyPreset.fixAll[0].id,
             "dictationKey": DictationKey.rightOption.rawValue,
             "dictationEngine": DictationEngine.auto.rawValue,
             "dictationLanguages": DictationLanguages.englishHebrew.rawValue,
@@ -142,6 +153,7 @@ final class AppSettings: ObservableObject {
         elevenModelID = defaults.string(forKey: "elevenModel") ?? ElevenLabsTTS.Model.flash.rawValue
         speechSpeed = defaults.double(forKey: "speechSpeed")
         speakHotkeyID = defaults.string(forKey: "speakHotkey") ?? HotkeyPreset.speak[0].id
+        fixAllHotkeyID = defaults.string(forKey: "fixAllHotkey") ?? HotkeyPreset.fixAll[0].id
         dictationKeyID = defaults.string(forKey: "dictationKey") ?? DictationKey.rightOption.rawValue
         dictationEngineID = defaults.string(forKey: "dictationEngine") ?? DictationEngine.auto.rawValue
         dictationLanguagesID = defaults.string(forKey: "dictationLanguages") ?? DictationLanguages.englishHebrew.rawValue
@@ -175,6 +187,7 @@ final class AppSettings: ObservableObject {
     }
     var elevenModel: ElevenLabsTTS.Model { ElevenLabsTTS.Model(rawValue: elevenModelID) ?? .flash }
     var speakHotkey: HotkeyPreset { HotkeyPreset.findSpeak(speakHotkeyID) }
+    var fixAllHotkey: HotkeyPreset { HotkeyPreset.findFixAll(fixAllHotkeyID) }
 
     private static func account(for provider: SpeechProvider) -> String? {
         switch provider {
@@ -356,6 +369,9 @@ struct SettingsView: View {
             Section("Behavior") {
                 Picker("Refine shortcut", selection: $settings.hotkeyID) {
                     ForEach(HotkeyPreset.all) { Text($0.label).tag($0.id) }
+                }
+                Picker("Fix all mistakes", selection: $settings.fixAllHotkeyID) {
+                    ForEach(HotkeyPreset.fixAll) { Text($0.label).tag($0.id) }
                 }
                 Toggle("Show the issue badge next to the text field", isOn: $settings.showBadge)
                 Toggle("Open Lex at login", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))

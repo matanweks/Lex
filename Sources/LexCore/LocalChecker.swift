@@ -120,6 +120,19 @@ public enum IssueComposer {
         Set(s.components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'’-")).inverted).filter { !$0.isEmpty })
     }
 
+    /// The fixes "Fix All" applies: correctness and word-choice issues that have a
+    /// suggestion (clarity rewrites change wording, so they stay manual), without overlaps,
+    /// last first so applying one never shifts the ranges of the ones still to come.
+    public static func fixes(_ issues: [Issue]) -> [Issue] {
+        var chosen: [Issue] = []
+        for issue in issues.sorted(by: { $0.range.location < $1.range.location })
+        where issue.kind != .clarity && !issue.replacements.isEmpty && issue.replacements[0] != issue.original {
+            if let last = chosen.last, last.range.intersects(issue.range) { continue }
+            chosen.append(issue)
+        }
+        return chosen.reversed()
+    }
+
     public static func ignoreKey(_ issue: Issue) -> String {
         "\(issue.original)→\(issue.replacements.first ?? "")"
     }

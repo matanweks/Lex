@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
     private var speakHotKey: HotKey?
+    private var fixAllHotKey: HotKey?
     private var settingsWindow: NSWindow?
     private var trustTimer: Timer?
     private var bag = Set<AnyCancellable>()
@@ -38,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.store(in: &bag)
         settings.$speakHotkeyID.removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerSpeakHotKey() }
+        }.store(in: &bag)
+        settings.$fixAllHotkeyID.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerFixAllHotKey() }
         }.store(in: &bag)
         settings.$dictationKeyID.removeDuplicates().dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.dictation.keyChanged() }
@@ -72,6 +76,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             debugHooks?.install()
         }
     }
+
+    // MARK: Fix all
+
+    private func registerFixAllHotKey() {
+        fixAllHotKey = nil
+        let preset = settings.fixAllHotkey
+        fixAllHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 3) { [weak self] in
+            self?.engine.fixAll()
+        }
+        if fixAllHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
+    }
+
+    @objc private func fixAllFromMenu() { engine.fixAll() }
 
     // MARK: Read aloud
 
@@ -175,6 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refineItem.keyEquivalent = settings.hotkey.menuKey
         refineItem.keyEquivalentModifierMask = settings.hotkey.menuModifiers
         menu.addItem(refineItem)
+        let fixAllItem = item("Fix All Mistakes", #selector(fixAllFromMenu))
+        fixAllItem.keyEquivalent = settings.fixAllHotkey.menuKey
+        fixAllItem.keyEquivalentModifierMask = settings.fixAllHotkey.menuModifiers
+        menu.addItem(fixAllItem)
         let speakItem = item(reader.isActive ? "Stop Reading" : "Read Selection Aloud", #selector(readAloudFromMenu))
         speakItem.keyEquivalent = settings.speakHotkey.menuKey
         speakItem.keyEquivalentModifierMask = settings.speakHotkey.menuModifiers

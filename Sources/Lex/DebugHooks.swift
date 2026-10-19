@@ -118,6 +118,8 @@ final class DebugHooks {
                   let issue = EditMapper.issues(for: [AIEdit(original: parts[0], replacement: parts[1], kind: .grammar, reason: "test")], sentence: snap.text, base: 0).first
             else { Log.info("words not found"); return }
             engine.apply(issue, replacement: issue.replacements[0])
+        case "fix-all" where textEditFrontmost:
+            engine.fixAll()
         case "refine" where textEditFrontmost:
             openRefine(.sentence)
         case "refine-accept" where textEditFrontmost:

@@ -37,6 +37,11 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **Tidy-up:** when a transcript has fillers or a spoken correction ("Tuesday, no wait, Wednesday"), or is long, Claude Haiku tidies it, keeping your words and language. If the result strays from the transcript, the raw transcript is used instead. **Words to know** in Settings are passed to both as spelling hints.
   - **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
 
+- **Fix all:** press **⌃⌥F** to apply every correction in the field at once.
+  - **What's included:** spelling, grammar, punctuation and word choice. Clarity rewrites stay manual. The word you just typed counts too.
+  - **Accuracy:** Lex first has Claude check any sentence it hasn't reviewed, waiting up to 2.5 s, so a name only the spell checker flagged isn't "fixed".
+  - **How fixes go in:** fixes are applied one by one from the end of the text, so formatting such as @mentions survives. Each waits until the app has taken the previous one, and your clipboard is saved and restored once for the whole batch.
+
 Hover an underline to see the fix and apply it with a click. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
 
 ## Build
@@ -78,7 +83,7 @@ On first launch:
 
 `swift test` runs the core tests. With debug logging on, Lex also accepts commands posted as the distributed notification `dev.lex.debug`:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
-- `dump-field`, `apply-first` and `refine-accept` drive the real fix and refine paths.
+- `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths.
 - `speak:<text>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 - `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
 

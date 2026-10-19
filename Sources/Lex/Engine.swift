@@ -131,7 +131,7 @@ final class Engine {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
     }
 
-    private func scheduleAI() {
+    private func scheduleAI(force: Bool = false) {
         idleTimer?.invalidate()
         guard let snap = snapshot, settings.enabled, let model = settings.liveModel, client.hasKey else {
             onStatusChange?()
@@ -146,7 +146,7 @@ final class Engine {
             let words = s.text.split(whereSeparator: \.isWhitespace).count
             guard words >= 2, aiCache[s.text] == nil, !aiInFlight.contains(s.text) else { continue }
             if let failedAt = aiFailures[s.text], Date().timeIntervalSince(failedAt) < 30 { continue }
-            if !s.isComplete {
+            if !s.isComplete, !force {
                 // Still typing this one: wait for a pause, and for enough words to judge.
                 guard words >= 4 else { continue }
                 if idle < Self.idleDelay { waitingForIdle = true; continue }
@@ -213,19 +213,19 @@ final class Engine {
         onStatusChange?()
     }
 
+    /// Claude's verdict on a sentence: finished, still streaming, or for an older version.
+    private func review(for s: Sentence) -> AIReview? {
+        if let edits = aiCache[s.text] { return AIReview(text: s.text, edits: edits, complete: true) }
+        if let edits = aiPartial[s.text] { return AIReview(text: s.text, edits: edits, complete: false) }
+        return lastReviewAt[s.range.location]  // older version of this sentence
+    }
+
     private func recompose() {
         guard let snap = snapshot else { return }
         let local = localText == snap.text ? localIssues : []
         var shown: [Int: AIReview] = [:]
         issues = IssueComposer.compose(text: snap.text, caret: snap.caret, local: local, review: { s in
-            let review: AIReview?
-            if let edits = self.aiCache[s.text] {
-                review = AIReview(text: s.text, edits: edits, complete: true)
-            } else if let edits = self.aiPartial[s.text] {
-                review = AIReview(text: s.text, edits: edits, complete: false)
-            } else {
-                review = self.lastReviewAt[s.range.location]  // older version of this sentence
-            }
+            let review = self.review(for: s)
             if let review { shown[s.range.location] = review }
             return review
         }, ignored: ignored)
@@ -273,6 +273,43 @@ final class Engine {
                 Toast.show("This field didn't take the edit. The fix is on your clipboard.")
             }
         }
+    }
+
+    /// Applies every correction in the focused field at once. Asks Claude to check any
+    /// sentence it hasn't seen (including the one you're typing) and waits up to 2.5 s for
+    /// those checks, so a name only the spell checker flagged isn't "fixed".
+    func fixAll() {
+        guard snapshot != nil else {
+            Toast.show("Click into a text field with mistakes first.")
+            return
+        }
+        overlay.hideCard()
+        scheduleAI(force: true)
+        let started = Date()
+        func attempt() {
+            if !aiInFlight.isEmpty, Date().timeIntervalSince(started) < 2.5 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { attempt() }
+                return
+            }
+            guard let snap = snapshot else { return }
+            let local = localText == snap.text ? localIssues : []
+            // No caret: the word you just finished typing counts too.
+            let all = IssueComposer.compose(text: snap.text, caret: nil, local: local, review: { self.review(for: $0) }, ignored: ignored)
+            let fixes = IssueComposer.fixes(all)
+            guard !fixes.isEmpty else {
+                Toast.show(all.isEmpty ? "Nothing to fix." : "Only style suggestions left; hover them to choose.")
+                return
+            }
+            Log.info("fix all: \(fixes.count) fixes after \(Int(Date().timeIntervalSince(started) * 1000)) ms wait")
+            issues.removeAll { issue in fixes.contains { $0.id == issue.id } }
+            refreshRects()
+            tracker.replaceAll(in: snap, fixes: fixes) { applied in
+                Toast.show(applied == fixes.count
+                           ? "Fixed \(applied) \(applied == 1 ? "mistake" : "mistakes")"
+                           : "Fixed \(applied) of \(fixes.count); the rest didn't apply cleanly")
+            }
+        }
+        attempt()
     }
 
     func ignore(_ issue: Issue) {

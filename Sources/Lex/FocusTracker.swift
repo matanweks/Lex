@@ -543,6 +543,32 @@ extension FocusTracker {
     }
 }
 
+extension FocusTracker {
+    /// Applies several fixes in one field, last first (so earlier ranges never shift). Waits
+    /// for the app to take each edit before selecting the next, and saves and restores the
+    /// clipboard once for the whole batch.
+    func replaceAll(in snap: FieldSnapshot, fixes: [Issue], completion: @escaping (Int) -> Void) {
+        queue.async {
+            Paster.beginBatch()
+            var applied = 0
+            for issue in fixes {
+                let before = AX.string(snap.element, kAXValueAttribute)
+                let outcome = TextReplacer.replace(element: snap.element, viaPaste: snap.webBased, range: issue.range,
+                                                   original: issue.original, replacement: issue.replacements[0])
+                guard outcome != .failed else { continue }
+                applied += 1
+                for _ in 0..<30 {
+                    if AX.string(snap.element, kAXValueAttribute) != before { break }
+                    usleep(20_000)
+                }
+            }
+            Paster.endBatch()
+            Log.info("fix all: applied \(applied) of \(fixes.count) (\(snap.bundleID))")
+            DispatchQueue.main.async { completion(applied) }
+        }
+    }
+}
+
 enum TextReplacer {
     /// Selects the range through AX, then either writes it through AX (Cocoa apps) or pastes
     /// (web editors, where a raw AX write would bypass the editor and get lost).
@@ -655,9 +681,27 @@ enum Keys {
 
 enum Paster {
     /// Pastes `string` into the frontmost app and puts the user's clipboard back afterwards.
+    /// While a batch is open, pastes don't save or restore the clipboard one by one (that would
+    /// "restore" our own previous fix); the batch restores the user's clipboard once at the end.
+    private static var batchSaved: Snapshot?
+
+    static func beginBatch() { batchSaved = snapshot() }
+
+    static func endBatch() {
+        guard let saved = batchSaved else { return }
+        batchSaved = nil
+        let pb = NSPasteboard.general
+        let ours = pb.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            guard pb.changeCount == ours else { return }
+            restore(saved)
+        }
+    }
+
     static func paste(_ string: String) -> Bool {
         let pb = NSPasteboard.general
-        let saved = snapshot()
+        let inBatch = batchSaved != nil
+        let saved = inBatch ? [] : snapshot()
         pb.clearContents()
         let item = NSPasteboardItem()
         item.setString(string, forType: .string)
@@ -669,6 +713,7 @@ enum Paster {
 
         Keys.press(0x09, flags: .maskCommand)  // ⌘V
 
+        guard !inBatch else { return true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             guard pb.changeCount == ours else { return }  // the user copied something since
             restore(saved)
