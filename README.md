@@ -18,6 +18,16 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **⌘Z** undoes a step, **⌘C** copies, **⌘D** toggles the change view, **esc** closes.
   - With a selection, the shortcut refines the selection. The badge next to the field refines the whole field.
 
+- **Read aloud:** select text anywhere and press **⌥§** to hear it; press again to stop.
+  - **Source:** the selection comes through Accessibility, or by copying it (web pages, PDFs, Mail) and then restoring your clipboard. With nothing selected in a text field, Lex reads the paragraph at the cursor. Password fields are never read.
+  - **Voices:**
+    - **Google Chirp 3 HD** (default): natural voices; the first 1M characters each month are free, then $0.03 per 1,000.
+    - **ElevenLabs:** $0.04 per 1,000 characters (Flash) or $0.08 (Multilingual, v3).
+    - **macOS voice:** free, offline; the fallback when no cloud voice is set up.
+  - **Speed:** text is split at sentence boundaries into small-then-growing chunks (~90 → 240 → 600 → 1,200 characters). The first audio arrives in about 1.1 s, and the next chunk is fetched while the current one plays. The language is detected, so Hebrew text gets a he-IL voice.
+  - **Cost:** audio is cached in `~/Library/Caches/dev.lex.app/speech`, so hearing the same text again is free. Settings shows this month's characters.
+  - **Mini player:** pause, speed (0.8×–2×) and stop.
+
 Hover an underline to see the fix and apply it with a click. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
 
 ## Build
@@ -31,6 +41,13 @@ The script builds a release binary, wraps it as `Lex.app`, signs it with your Ap
 On first launch:
 1. Allow Lex under System Settings › Privacy & Security › Accessibility.
 2. Paste an Anthropic API key in Settings (it's stored in your Keychain), then click **Test connection**.
+3. For the Google voice, sign in once with gcloud. This works where your organisation blocks API keys; an API key in Settings works too. Lex reads the saved sign-in from `~/.config/gcloud/application_default_credentials.json` and refreshes its own access tokens:
+   ```bash
+   gcloud auth application-default login
+   gcloud auth application-default set-quota-project PROJECT_ID
+   gcloud services enable texttospeech.googleapis.com --project PROJECT_ID
+   ```
+   Then click **Check connection** in Settings › Read aloud.
 
 ## Notes
 
@@ -52,6 +69,7 @@ On first launch:
 `swift test` runs the core tests. With debug logging on, Lex also accepts commands posted as the distributed notification `dev.lex.debug`:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first` and `refine-accept` drive the real fix and refine paths.
+- `speak:<text>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 
 The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
 
@@ -65,4 +83,5 @@ The field commands only act on TextEdit, or on text that starts with `LEXTEST`; 
 ## Layout
 
 - `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
-- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, hotkey, settings.
+- `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, hotkeys, settings.

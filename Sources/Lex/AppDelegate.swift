@@ -8,8 +8,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var client = ClaudeClient(apiKey: { [settings] in settings.apiKey() })
     private lazy var engine = Engine(settings: settings, client: client)
     private lazy var refine = RefineController(client: client, settings: settings, tracker: engine.tracker)
+    private lazy var speech = SpeechClient(cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("dev.lex.app/speech"))
+    private lazy var reader = Reader(settings: settings, client: speech)
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
+    private var speakHotKey: HotKey?
     private var settingsWindow: NSWindow?
     private var trustTimer: Timer?
     private var bag = Set<AnyCancellable>()
@@ -31,6 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$hotkeyID.removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerHotKey() }
         }.store(in: &bag)
+        settings.$speakHotkeyID.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerSpeakHotKey() }
+        }.store(in: &bag)
+        DispatchQueue.global(qos: .utility).async { [speech] in speech.trimCache() }
+        // Fetch the Google sign-in token now, so the first read doesn't wait for it.
+        if speech.googleSignedIn { Task { [speech] in _ = try? await speech.adc.accessToken() } }
         settings.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
                 self?.engine.settingsChanged()
@@ -52,8 +62,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if !settings.hasAPIKey { openSettings() }
         if settings.debugLog {
-            debugHooks = DebugHooks(engine: engine, refine: refine, client: client) { [weak self] in self?.openRefine(scope: $0) }
+            debugHooks = DebugHooks(engine: engine, refine: refine, client: client, reader: reader, speech: speech, settings: settings) { [weak self] in self?.openRefine(scope: $0) }
             debugHooks?.install()
+        }
+    }
+
+    // MARK: Read aloud
+
+    private func registerSpeakHotKey() {
+        speakHotKey = nil
+        let preset = settings.speakHotkey
+        speakHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 2) { [weak self] in
+            self?.readAloud()
+        }
+        if speakHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
+    }
+
+    @objc private func readAloudFromMenu() { readAloud() }
+
+    /// The shortcut toggles: press to read the selection, press again to stop.
+    private func readAloud() {
+        if reader.isActive { reader.stop(); return }
+        guard AX.isTrusted else { AX.promptForTrust(); return }
+        TextGrabber.grab(engine.tracker) { [weak self] text in
+            guard let self else { return }
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                Toast.show("Select some text, then press \(self.settings.speakHotkey.label) to hear it.")
+                return
+            }
+            self.reader.read(text)
         }
     }
 
@@ -126,6 +163,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refineItem.keyEquivalent = settings.hotkey.menuKey
         refineItem.keyEquivalentModifierMask = settings.hotkey.menuModifiers
         menu.addItem(refineItem)
+        let speakItem = item(reader.isActive ? "Stop Reading" : "Read Selection Aloud", #selector(readAloudFromMenu))
+        speakItem.keyEquivalent = settings.speakHotkey.menuKey
+        speakItem.keyEquivalentModifierMask = settings.speakHotkey.menuModifiers
+        menu.addItem(speakItem)
         menu.addItem(item(settings.enabled ? "Pause Lex" : "Resume Lex", #selector(togglePaused)))
         if let app = engine.lastTargetApp {
             let excluded = settings.excludedApps.contains(app.bundleID)
@@ -177,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func openSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client)))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client, speech: speech, reader: reader)))
             window.title = "Lex Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false

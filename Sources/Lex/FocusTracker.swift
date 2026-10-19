@@ -81,6 +81,35 @@ final class FocusTracker {
     func setPaused(_ paused: Bool) { queue.async { self.paused = paused; self.last = nil } }
     func setProbe(_ range: NSRange?) { queue.async { self.probeRange = range; self.probeRect = nil } }
 
+    enum Selection {
+        case selected(String)            // the app reported a non-empty selection
+        case caret(String, NSRange)      // a text field with nothing selected
+        case secure                      // a password field: never read
+        case unknown                     // no answer through Accessibility (web pages, PDFs…)
+    }
+
+    /// What's selected in the frontmost app, for reading aloud. Works in every app,
+    /// including ones Lex doesn't check.
+    func selection(_ completion: @escaping (Selection) -> Void) {
+        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        queue.async {
+            var result = Selection.unknown
+            if let pid, pid != self.ownPid, let el = AX.focusedElement(inApp: pid) {
+                let role = AX.string(el, kAXRoleAttribute)
+                let subrole = AX.string(el, kAXSubroleAttribute)
+                if role == "AXSecureTextField" || subrole == "AXSecureTextField" {
+                    result = .secure
+                } else if let selected = AX.string(el, kAXSelectedTextAttribute), !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    result = .selected(selected)
+                } else if let value = AX.string(el, kAXValueAttribute), !value.isEmpty,
+                          let range = AX.range(el, kAXSelectedTextRangeAttribute), range.length == 0 {
+                    result = .caret(value, range)
+                }
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
     /// Reads the focused field right now (for the refine shortcut).
     func readNow(_ completion: @escaping (FieldSnapshot?) -> Void) {
         queue.async {
@@ -628,9 +657,7 @@ enum Paster {
     /// Pastes `string` into the frontmost app and puts the user's clipboard back afterwards.
     static func paste(_ string: String) -> Bool {
         let pb = NSPasteboard.general
-        let saved: [[(NSPasteboard.PasteboardType, Data)]] = (pb.pasteboardItems ?? []).map { item in
-            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
-        }
+        let saved = snapshot()
         pb.clearContents()
         let item = NSPasteboardItem()
         item.setString(string, forType: .string)
@@ -644,14 +671,28 @@ enum Paster {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             guard pb.changeCount == ours else { return }  // the user copied something since
-            pb.clearContents()
-            let items = saved.map { pairs -> NSPasteboardItem in
-                let restored = NSPasteboardItem()
-                for (type, data) in pairs { restored.setData(data, forType: type) }
-                return restored
-            }
-            if !items.isEmpty { pb.writeObjects(items) }
+            restore(saved)
         }
         return true
+    }
+
+    typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
+
+    /// Everything on the clipboard, every type of every item.
+    static func snapshot() -> Snapshot {
+        (NSPasteboard.general.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+    }
+
+    static func restore(_ saved: Snapshot) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        let items = saved.map { pairs -> NSPasteboardItem in
+            let restored = NSPasteboardItem()
+            for (type, data) in pairs { restored.setData(data, forType: type) }
+            return restored
+        }
+        if !items.isEmpty { pb.writeObjects(items) }
     }
 }

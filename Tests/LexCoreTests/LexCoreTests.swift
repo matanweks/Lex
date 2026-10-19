@@ -251,3 +251,78 @@ final class LocalCheckerTests: XCTestCase {
         XCTAssertTrue(issues.contains { $0.original == "tomorow" })
     }
 }
+
+final class SpeechTests: XCTestCase {
+    func testCleanCollapsesSpacingAndInvisibleCharacters() {
+        XCTAssertEqual(SpeechText.clean("  Hello\u{200B}   world.\n\n\n Next\u{00A0}line  "), "Hello world.\nNext line")
+    }
+
+    func testFirstChunkIsShortAndNothingIsLost() {
+        let text = (1...30).map { "Sentence number \($0) is here." }.joined(separator: " ")
+        let chunks = SpeechText.chunks(text)
+        XCTAssertLessThanOrEqual(chunks[0].count, 90)
+        XCTAssertLessThanOrEqual(chunks[1].count, 240)
+        XCTAssertTrue(chunks.allSatisfy { $0.count <= 1200 })
+        XCTAssertEqual(chunks.joined(separator: " "), text)
+    }
+
+    func testLongOpeningSentenceSplitsAtAClause() {
+        let text = "When you finish writing a long email to the whole team, Lex can read it back so you hear how it sounds. Then you send it."
+        let chunks = SpeechText.chunks(text)
+        XCTAssertEqual(chunks[0], "When you finish writing a long email to the whole team,")
+        XCTAssertEqual(chunks.joined(separator: " "), text)
+    }
+
+    func testVeryLongSentenceIsSplitAtPunctuation() {
+        let long = Array(repeating: "word", count: 600).joined(separator: " ") + ", end."
+        let chunks = SpeechText.chunks(long)
+        XCTAssertTrue(chunks.allSatisfy { $0.count <= 1200 })
+        XCTAssertEqual(chunks.joined(separator: " ").split(separator: " ").count, long.split(separator: " ").count)
+    }
+
+    func testLanguageToGoogleLocale() {
+        XCTAssertEqual(GoogleTTS.locale(for: SpeechText.language(of: "This is a perfectly ordinary English sentence.")), "en-US")
+        XCTAssertEqual(GoogleTTS.locale(for: SpeechText.language(of: "זה משפט רגיל בעברית שצריך להקריא בקול.")), "he-IL")
+        XCTAssertEqual(GoogleTTS.locale(for: nil), "en-US")
+    }
+
+    func testGoogleRequestAndResponse() throws {
+        let body = GoogleTTS.requestBody(text: "Hi", locale: "en-US", voice: "Kore")
+        XCTAssertEqual((body["voice"] as? [String: String])?["name"], "en-US-Chirp3-HD-Kore")
+        XCTAssertEqual((body["audioConfig"] as? [String: String])?["audioEncoding"], "MP3")
+        let response = #"{"audioContent":"SUQz"}"#
+        XCTAssertEqual(try GoogleTTS.audio(from: Data(response.utf8)), Data("ID3".utf8))
+        XCTAssertThrowsError(try GoogleTTS.audio(from: Data("{}".utf8)))
+    }
+
+    func testElevenLabsVoicesParse() {
+        let json = #"{"voices":[{"voice_id":"abc","name":"George"},{"voice_id":"def","name":"Rachel"}]}"#
+        XCTAssertEqual(ElevenLabsTTS.voices(from: Data(json.utf8)).map(\.name), ["George", "Rachel"])
+        XCTAssertEqual(ElevenLabsTTS.requestBody(text: "Hi", model: .flash)["model_id"] as? String, "eleven_flash_v2_5")
+    }
+
+    func testParsesGcloudSignIn() {
+        let user = #"{"client_id":"id.apps","client_secret":"s","refresh_token":"r","type":"authorized_user","quota_project_id":"my-proj"}"#
+        XCTAssertEqual(GoogleADC.parse(Data(user.utf8)), GoogleADC.Credentials(clientID: "id.apps", clientSecret: "s", refreshToken: "r", quotaProject: "my-proj"))
+        let service = #"{"type":"service_account","private_key":"k","client_email":"x@y"}"#
+        XCTAssertNil(GoogleADC.parse(Data(service.utf8)))
+        XCTAssertEqual(String(decoding: GoogleADC.form(["a": "1/x+y", "b": "z"]), as: UTF8.self), "a=1%2Fx%2By&b=z")
+    }
+
+    func testCachedAudioIsReturnedWithoutAKey() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lex-speech-test-\(UUID().uuidString)")
+        let client = SpeechClient(cacheDirectory: dir, adcFile: dir.appendingPathComponent("no-sign-in.json"))
+        let request = SpeechClient.Request(text: "Hi there.", provider: .google, key: "", googleLocale: "en-US", googleVoice: "Kore", elevenVoiceID: "", elevenModel: .flash)
+        do {
+            _ = try await client.synthesize(request)
+            XCTFail("expected a missing-key error")
+        } catch {
+            XCTAssertEqual(error as? SpeechError, .missingKey(.google))
+        }
+        try Data("ID3".utf8).write(to: dir.appendingPathComponent(request.cacheKey + ".mp3"))
+        let hit = try await client.synthesize(request)
+        XCTAssertTrue(hit.cached)
+        XCTAssertEqual(hit.audio, Data("ID3".utf8))
+        try? FileManager.default.removeItem(at: dir)
+    }
+}

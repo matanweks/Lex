@@ -10,11 +10,17 @@ final class DebugHooks {
     private let refine: RefineController
     private let client: ClaudeClient
     private let openRefine: (RefineScope) -> Void
+    private let reader: Reader
+    private let speech: SpeechClient
+    private let settings: AppSettings
 
-    init(engine: Engine, refine: RefineController, client: ClaudeClient, openRefine: @escaping (RefineScope) -> Void) {
+    init(engine: Engine, refine: RefineController, client: ClaudeClient, reader: Reader, speech: SpeechClient, settings: AppSettings, openRefine: @escaping (RefineScope) -> Void) {
         self.engine = engine
         self.refine = refine
         self.client = client
+        self.reader = reader
+        self.speech = speech
+        self.settings = settings
         self.openRefine = openRefine
     }
 
@@ -54,6 +60,14 @@ final class DebugHooks {
                 }
                 Log.info("raw: done")
             }
+        case let c where c.hasPrefix("speak:"):
+            reader.read(String(c.dropFirst(6)))
+        case "speak-stop":
+            reader.stop()
+        case "speak-state":
+            Log.info("reader: phase=\(reader.model.phase) voice=\(reader.model.voice) chunk \(reader.model.index + 1)/\(reader.model.count) speed=\(reader.model.speed)")
+        case "tts-bench":
+            Task { await ttsBench() }
         case "think-bench":
             Task { await thinkBench() }
         case "raw":
@@ -184,6 +198,34 @@ final class DebugHooks {
             }
         }
         Log.info("benchmark: done")
+    }
+
+    /// Times the configured cloud voice on sample text without playing it. Sample text carries a
+    /// timestamp so the disk cache can't answer.
+    private func ttsBench() async {
+        let provider = settings.speechProvider
+        let key = settings.speechKey(for: provider) ?? ""
+        guard provider != .system, !key.isEmpty || (provider == .google && speech.googleSignedIn) else { Log.info("tts-bench: no cloud voice configured"); return }
+        let stamp = Int(Date().timeIntervalSince1970)
+        let samples = [
+            "Hi! This is a short opening sentence, run \(stamp).",
+            "Here is a longer passage that stands in for a typical paragraph you might select and listen to while reading an email or a document. It has a few sentences, run \(stamp), so the timing reflects real use.",
+            "זה משפט בעברית לבדיקה, הרצה \(stamp).",
+        ]
+        // What a real read waits for: the first chunk of a typical paragraph.
+        let paragraph = "When you finish writing a long email to the whole team, run \(stamp), Lex can read it back so you can hear how it sounds before you send it. It reads in chunks, so the audio starts quickly."
+        for text in samples + [SpeechText.chunks(paragraph)[0]] {
+            let started = Date()
+            let request = SpeechClient.Request(text: text, provider: provider, key: key, googleLocale: GoogleTTS.locale(for: SpeechText.language(of: text)),
+                                               googleVoice: settings.googleVoice, elevenVoiceID: settings.elevenVoiceID, elevenModel: settings.elevenModel)
+            do {
+                let (audio, _) = try await speech.synthesize(request)
+                Log.info("tts-bench \(provider.rawValue) \(request.googleLocale): \(text.count) chars → \(audio.count / 1024) KB in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            } catch {
+                Log.info("tts-bench error: \(error.localizedDescription)")
+            }
+        }
+        Log.info("tts-bench: done")
     }
 
     /// Haiku with thinking off vs adaptive thinking at low effort: speed, and how often the
