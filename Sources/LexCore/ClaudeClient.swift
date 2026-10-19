@@ -174,6 +174,33 @@ public final class ClaudeClient: @unchecked Sendable {
         return full
     }
 
+    /// Tidies a dictation transcript (fillers, self-corrections, punctuation) without
+    /// changing what was said.
+    public func cleanDictation(_ transcript: String, app: String, before: String, words: [String], model: ClaudeModel) async throws -> String {
+        var body: [String: Any] = [
+            "model": model.rawValue,
+            "max_tokens": 4000,
+            "system": [["type": "text", "text": Prompts.dictationSystem, "cache_control": ["type": "ephemeral"]]],
+            "messages": [["role": "user", "content": Prompts.dictationUser(transcript: transcript, app: app, before: before, words: words)]],
+        ]
+        var betas: [String] = []
+        model.applyLowLatency(to: &body, betas: &betas)
+        var full = ""
+        try await stream(body: body, betas: betas) { delta in
+            if let delta { full += delta } else { full = "" }
+        }
+        return stripWrapper(full)
+    }
+
+    /// Strips wrapping tags or quotes a model sometimes adds.
+    func stripWrapper(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        for tag in ["transcript", "text"] where t.hasPrefix("<\(tag)>") && t.hasSuffix("</\(tag)>") {
+            t = String(t.dropFirst(tag.count + 2).dropLast(tag.count + 3)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return t
+    }
+
     /// Runs a streaming request. `onDelta` gets each text delta, or nil when a server-side
     /// fallback restarted the answer and what came before should be dropped.
     private func stream(body: [String: Any], betas: [String], onDelta: (String?) -> Void) async throws {

@@ -99,6 +99,13 @@ final class AppSettings: ObservableObject {
     @Published var speechSpeed: Double { didSet { defaults.set(speechSpeed, forKey: "speechSpeed") } }
     @Published var speakHotkeyID: String { didSet { defaults.set(speakHotkeyID, forKey: "speakHotkey") } }
     @Published private(set) var hasGoogleKey = false
+
+    // Dictation
+    @Published var dictationKeyID: String { didSet { defaults.set(dictationKeyID, forKey: "dictationKey") } }
+    @Published var dictationEngineID: String { didSet { defaults.set(dictationEngineID, forKey: "dictationEngine") } }
+    @Published var dictationLanguagesID: String { didSet { defaults.set(dictationLanguagesID, forKey: "dictationLanguages") } }
+    @Published var dictationPolish: Bool { didSet { defaults.set(dictationPolish, forKey: "dictationPolish") } }
+    @Published var dictationWords: String { didSet { defaults.set(dictationWords, forKey: "dictationWords") } }
     @Published private(set) var hasElevenKey = false
     private var cachedSpeechKeys: [String: String] = [:]
 
@@ -117,6 +124,11 @@ final class AppSettings: ObservableObject {
             "elevenModel": ElevenLabsTTS.Model.flash.rawValue,
             "speechSpeed": 1.0,
             "speakHotkey": HotkeyPreset.speak[0].id,
+            "dictationKey": DictationKey.rightOption.rawValue,
+            "dictationEngine": DictationEngine.auto.rawValue,
+            "dictationLanguages": DictationLanguages.englishHebrew.rawValue,
+            "dictationPolish": true,
+            "dictationWords": "",
         ])
         enabled = defaults.bool(forKey: "enabled")
         liveModelID = defaults.string(forKey: "liveModel") ?? ClaudeModel.haiku.rawValue
@@ -130,12 +142,37 @@ final class AppSettings: ObservableObject {
         elevenModelID = defaults.string(forKey: "elevenModel") ?? ElevenLabsTTS.Model.flash.rawValue
         speechSpeed = defaults.double(forKey: "speechSpeed")
         speakHotkeyID = defaults.string(forKey: "speakHotkey") ?? HotkeyPreset.speak[0].id
+        dictationKeyID = defaults.string(forKey: "dictationKey") ?? DictationKey.rightOption.rawValue
+        dictationEngineID = defaults.string(forKey: "dictationEngine") ?? DictationEngine.auto.rawValue
+        dictationLanguagesID = defaults.string(forKey: "dictationLanguages") ?? DictationLanguages.englishHebrew.rawValue
+        dictationPolish = defaults.bool(forKey: "dictationPolish")
+        dictationWords = defaults.string(forKey: "dictationWords") ?? ""
         hasAPIKey = !(apiKey() ?? "").isEmpty
         hasGoogleKey = !(speechKey(for: .google) ?? "").isEmpty
         hasElevenKey = !(speechKey(for: .elevenLabs) ?? "").isEmpty
     }
 
     var speechProvider: SpeechProvider { SpeechProvider(rawValue: speechProviderID) ?? .google }
+    var dictationKey: DictationKey { DictationKey(rawValue: dictationKeyID) ?? .rightOption }
+    var dictationEngine: DictationEngine { DictationEngine(rawValue: dictationEngineID) ?? .auto }
+    var dictationLanguages: DictationLanguages { DictationLanguages(rawValue: dictationLanguagesID) ?? .englishHebrew }
+    var dictationWordList: [String] {
+        dictationWords.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// Seconds of audio sent to Google this month.
+    var dictationSeconds: Double { defaults.double(forKey: Self.monthKey("dictationSeconds")) }
+
+    func addDictationSeconds(_ s: Double) {
+        let key = Self.monthKey("dictationSeconds")
+        defaults.set(defaults.double(forKey: key) + s, forKey: key)
+        objectWillChange.send()
+    }
+
+    private static func monthKey(_ base: String) -> String {
+        let month = Calendar.current.dateComponents([.year, .month], from: Date())
+        return "\(base)-\(month.year ?? 0)-\(month.month ?? 0)"
+    }
     var elevenModel: ElevenLabsTTS.Model { ElevenLabsTTS.Model(rawValue: elevenModelID) ?? .flash }
     var speakHotkey: HotkeyPreset { HotkeyPreset.findSpeak(speakHotkeyID) }
 
@@ -326,6 +363,8 @@ struct SettingsView: View {
 
             readAloudSection
 
+            dictationSection
+
             Section {
                 if settings.excludedApps.isEmpty {
                     Text("None").foregroundStyle(.secondary)
@@ -350,13 +389,83 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 540, height: 760)
+        .frame(width: 560, height: 780)
         .onReceive(trustPoll) { _ in
             if AX.isTrusted != trusted { trusted = AX.isTrusted }
             let creds = speech.adc.credentials()
             if (creds != nil) != googleSignedIn { googleSignedIn = creds != nil }
             if creds?.quotaProject != googleProject { googleProject = creds?.quotaProject }
         }
+    }
+
+    // MARK: Dictation
+
+    @State private var micStatus = Recorder.permission
+    @State private var keyMonitoring = DictationController.keyMonitoringAllowed
+
+    @ViewBuilder private var dictationSection: some View {
+        Section {
+            HStack {
+                statusIcon(micStatus == .authorized)
+                Text(micStatus == .authorized ? "Microphone allowed" : micStatus == .notDetermined ? "Lex will ask for the microphone the first time" : "Microphone not allowed")
+                Spacer()
+                if micStatus == .notDetermined {
+                    Button("Allow now") { Recorder.requestPermission { _ in micStatus = Recorder.permission } }
+                } else if micStatus != .authorized {
+                    Button("Open System Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                    }
+                }
+            }
+            HStack {
+                statusIcon(keyMonitoring)
+                Text(keyMonitoring ? "Input Monitoring allowed (for the talk key)" : "Input Monitoring not allowed: Lex can't see the talk key")
+                Spacer()
+                if !keyMonitoring {
+                    Button("Open System Settings") {
+                        CGRequestListenEventAccess()
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+                    }
+                }
+            }
+            Picker("Talk key", selection: $settings.dictationKeyID) {
+                ForEach(DictationKey.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+            Picker("Engine", selection: $settings.dictationEngineID) {
+                ForEach(DictationEngine.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+            if settings.dictationEngine != .apple {
+                Picker(settings.dictationEngine == .auto ? "Languages with Google" : "Languages", selection: $settings.dictationLanguagesID) {
+                    ForEach(DictationLanguages.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                if !googleSignedIn {
+                    Text("Needs the gcloud sign-in from Read aloud above, with Speech-to-Text enabled: gcloud services enable speech.googleapis.com --project PROJECT_ID")
+                        .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }
+            Toggle("Tidy up with Claude: drop \"um\"s, apply \"no wait…\" corrections, fix punctuation", isOn: $settings.dictationPolish)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Words to know")
+                TextField("Names and terms, comma separated: Pelles, Procore, Trimble", text: $settings.dictationWords)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Text(dictationUsage).font(.caption).foregroundStyle(.secondary)
+        } header: {
+            Text("Dictation")
+        } footer: {
+            Text("Hold \(settings.dictationKey.short) and talk; let go to type it where your cursor is. Double-tap it for hands-free and tap once more to finish; esc cancels. Using the key with another key (typing a special character) never dictates.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onReceive(trustPoll) { _ in
+            if Recorder.permission != micStatus { micStatus = Recorder.permission }
+            if DictationController.keyMonitoringAllowed != keyMonitoring { keyMonitoring = DictationController.keyMonitoringAllowed }
+        }
+    }
+
+    private var dictationUsage: String {
+        guard settings.dictationEngine != .apple else { return "Free: transcribed on this Mac" }
+        let minutes = settings.dictationSeconds / 60
+        return String(format: "This month: %.1f minutes dictated, about $%.2f", minutes, minutes * 0.016)
     }
 
     // MARK: Read aloud

@@ -2,27 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>dev.lex.app</string>
-    <key>CFBundleName</key>
-    <string>Lex</string>
-    <key>CFBundleDisplayName</key>
-    <string>Lex</string>
-    <key>CFBundleExecutable</key>
-    <string>Lex</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>Personal build</string>
+	<key>CFBundleDisplayName</key>
+	<string>Lex</string>
+	<key>CFBundleExecutable</key>
+	<string>Lex</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.lex.app</string>
+	<key>CFBundleName</key>
+	<string>Lex</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Personal build</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Lex listens only while you hold the dictation key, to type what you say.</string>
 </dict>
 </plist>

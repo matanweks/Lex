@@ -397,6 +397,30 @@ public final class SpeechClient: @unchecked Sendable {
         return (audio, false)
     }
 
+    /// Transcribes up to about a minute of 16 kHz audio with Google's Chirp 3, through the
+    /// gcloud sign-in (billed to its quota project).
+    public func transcribe(_ audio: PCM16, languages: [String], phrases: [String]) async throws -> String {
+        guard let project = adc.credentials()?.quotaProject else { throw SpeechError.missingKey(.google) }
+        let (token, _) = try await adc.accessToken()
+        var req = URLRequest(url: GoogleSTT.url(project: project))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 60
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+        req.setValue(project, forHTTPHeaderField: "x-goog-user-project")
+        req.httpBody = try JSONSerialization.data(withJSONObject: GoogleSTT.requestBody(audio: audio, languages: languages, phrases: phrases))
+        let (data, response) = try await session.data(for: req)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            let message = Self.message(from: data)
+            if status == 403, message.contains("disabled") || message.contains("not been used") {
+                throw SpeechError.http(.google, 403, "Turn on Speech-to-Text for project \(project): gcloud services enable speech.googleapis.com --project \(project)")
+            }
+            throw SpeechError.http(.google, status, message)
+        }
+        return try GoogleSTT.transcript(from: data)
+    }
+
     /// The voices on an ElevenLabs account, for the picker in Settings.
     public func elevenLabsVoices(key: String) async -> [(id: String, name: String)] {
         var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/voices")!)

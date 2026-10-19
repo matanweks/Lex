@@ -326,3 +326,92 @@ final class SpeechTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 }
+
+final class DictationTests: XCTestCase {
+    /// Seconds of "speech" (a loud tone) or "pause" (faint noise) at 16 kHz.
+    func audio(_ parts: [(Double, Bool)]) -> [Int16] {
+        var out: [Int16] = []
+        var phase = 0.0
+        for (seconds, loud) in parts {
+            for _ in 0..<Int(seconds * 16_000) {
+                phase += 2 * .pi * 220 / 16_000
+                out.append(loud ? Int16(8000 * sin(phase)) : Int16.random(in: -40...40))
+            }
+        }
+        return out
+    }
+
+    func testCutsAtAPauseAfterEnoughSpeech() {
+        let a = audio([(9, true), (0.8, false), (3, true)])
+        let cut = PauseSegmenter().cut(a[...])
+        XCTAssertNotNil(cut)
+        let seconds = Double(cut!) / 16_000
+        XCTAssertTrue((9.0...9.8).contains(seconds), "cut at \(seconds)s")
+    }
+
+    func testDoesNotCutShortOrUnpausedAudio() {
+        XCTAssertNil(PauseSegmenter().cut(audio([(4, true), (1, false), (2, true)])[...]))  // too short
+        XCTAssertNil(PauseSegmenter().cut(audio([(9, true), (0.3, false), (3, true)])[...]))  // pause too brief
+    }
+
+    func testForcesACutAtTheMaximumLength() {
+        let a = audio([(47, true)])
+        let cut = PauseSegmenter().cut(a[...])
+        XCTAssertNotNil(cut)
+        XCTAssertLessThanOrEqual(Double(cut!) / 16_000, 47)
+    }
+
+    func testSilenceDetection() {
+        XCTAssertTrue(PauseSegmenter.isSilent(audio([(1.5, false)])))
+        XCTAssertFalse(PauseSegmenter.isSilent(audio([(0.3, false), (1.0, true), (0.3, false)])))
+    }
+
+    func testGoogleRequestAndTranscript() throws {
+        let body = GoogleSTT.requestBody(audio: PCM16(samples: [1, 2, 3]), languages: ["en-US", "iw-IL"], phrases: ["Pelles", " "])
+        let config = body["config"] as? [String: Any]
+        XCTAssertEqual(config?["model"] as? String, "chirp_3")
+        XCTAssertEqual(config?["languageCodes"] as? [String], ["en-US", "iw-IL"])
+        XCTAssertNotNil(config?["adaptation"])
+        XCTAssertEqual(GoogleSTT.url(project: "p").absoluteString, "https://us-speech.googleapis.com/v2/projects/p/locations/us/recognizers/_:recognize")
+        let response = #"{"results":[{"alternatives":[{"transcript":"Hello there."}]},{"alternatives":[{"transcript":" How are you?"}]}]}"#
+        XCTAssertEqual(try GoogleSTT.transcript(from: Data(response.utf8)), "Hello there. How are you?")
+        XCTAssertEqual(try GoogleSTT.transcript(from: Data("{}".utf8)), "")
+    }
+
+    func testCleanupIsDiscardedWhenItStrays() {
+        let raw = "um so I think we should uh ship it on Tuesday no wait Wednesday"
+        XCTAssertEqual(DictationText.choose(cleaned: "So I think we should ship it on Wednesday.", raw: raw), "So I think we should ship it on Wednesday.")
+        XCTAssertEqual(DictationText.choose(cleaned: String(repeating: "Here is a long answer instead. ", count: 10), raw: raw), raw)
+        XCTAssertEqual(DictationText.choose(cleaned: nil, raw: raw), raw)
+    }
+
+    func testSpacingBeforeInsertedText() {
+        XCTAssertEqual(DictationText.spaced("hello", after: "d"), " hello")
+        XCTAssertEqual(DictationText.spaced("hello", after: " "), "hello")
+        XCTAssertEqual(DictationText.spaced(", then", after: "d"), ", then")
+        XCTAssertEqual(DictationText.spaced("hello", after: "("), "hello")
+        XCTAssertEqual(DictationText.spaced("hello", after: nil), "hello")
+    }
+
+    func testAutoEngineFollowsTheKeyboard() {
+        XCTAssertEqual(DictationEngine.auto.resolved(keyboardLanguage: "en", appleAvailable: true), .apple)
+        XCTAssertEqual(DictationEngine.auto.resolved(keyboardLanguage: "he", appleAvailable: true), .google)
+        XCTAssertEqual(DictationEngine.auto.resolved(keyboardLanguage: "en", appleAvailable: false), .google)
+        XCTAssertEqual(DictationEngine.apple.resolved(keyboardLanguage: "he", appleAvailable: false), .google)
+    }
+
+    func testTidyOnlyWhenItHelps() {
+        XCTAssertFalse(DictationText.needsTidy("Sounds good, see you at three."))
+        XCTAssertTrue(DictationText.needsTidy("Um, so I think we should ship it."))
+        XCTAssertTrue(DictationText.needsTidy("Ship it Tuesday, no wait, Wednesday."))
+        XCTAssertTrue(DictationText.needsTidy("אממ אני חושב שכדאי"))
+        XCTAssertTrue(DictationText.needsTidy(String(repeating: "word ", count: 30)))
+    }
+
+    func testDictationPrompt() {
+        let user = Prompts.dictationUser(transcript: "hi", app: "Slack", before: "Thanks,", words: ["Pelles", ""])
+        XCTAssertTrue(user.contains("<app>Slack</app>"))
+        XCTAssertTrue(user.contains("<words>Pelles</words>"))
+        XCTAssertTrue(user.hasSuffix("<transcript>hi</transcript>"))
+    }
+}

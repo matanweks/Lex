@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var speech = SpeechClient(cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
         .appendingPathComponent("dev.lex.app/speech"))
     private lazy var reader = Reader(settings: settings, client: speech)
+    private lazy var dictation = DictationController(settings: settings, claude: client, speech: speech, tracker: engine.tracker)
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
     private var speakHotKey: HotKey?
@@ -38,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$speakHotkeyID.removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerSpeakHotKey() }
         }.store(in: &bag)
+        settings.$dictationKeyID.removeDuplicates().dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.dictation.keyChanged() }
+        }.store(in: &bag)
         DispatchQueue.global(qos: .utility).async { [speech] in speech.trimCache() }
         // Fetch the Google sign-in token now, so the first read doesn't wait for it.
         if speech.googleSignedIn { Task { [speech] in _ = try? await speech.adc.accessToken() } }
@@ -51,12 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Log.info("launch: trusted=\(AX.isTrusted) key=\(settings.hasAPIKey) model=\(settings.liveModelID) refine=\(settings.refineModelID)")
         if AX.isTrusted {
             engine.start()
+            dictation.start()
         } else {
             AX.promptForTrust()
             trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard AX.isTrusted else { return }
                 timer.invalidate()
                 self?.engine.start()
+                self?.dictation.start()
                 self?.updateIcon()
             }
         }
@@ -79,6 +85,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func readAloudFromMenu() { readAloud() }
+
+    @objc private func copyLastDictation() {
+        guard let text = dictation.lastDictation else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text.trimmingCharacters(in: .whitespaces), forType: .string)
+    }
 
     /// The shortcut toggles: press to read the selection, press again to stop.
     private func readAloud() {
@@ -167,6 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         speakItem.keyEquivalent = settings.speakHotkey.menuKey
         speakItem.keyEquivalentModifierMask = settings.speakHotkey.menuModifiers
         menu.addItem(speakItem)
+        if dictation.lastDictation != nil {
+            menu.addItem(item("Copy Last Dictation", #selector(copyLastDictation)))
+        }
         menu.addItem(item(settings.enabled ? "Pause Lex" : "Resume Lex", #selector(togglePaused)))
         if let app = engine.lastTargetApp {
             let excluded = settings.excludedApps.contains(app.bundleID)

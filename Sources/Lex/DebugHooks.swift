@@ -66,6 +66,10 @@ final class DebugHooks {
             reader.stop()
         case "speak-state":
             Log.info("reader: phase=\(reader.model.phase) voice=\(reader.model.voice) chunk \(reader.model.index + 1)/\(reader.model.count) speed=\(reader.model.speed)")
+        case "stt-test-apple":
+            Task { await sttTest(engine: .apple) }
+        case "stt-test-google":
+            Task { await sttTest(engine: .google) }
         case "tts-bench":
             Task { await ttsBench() }
         case "think-bench":
@@ -198,6 +202,36 @@ final class DebugHooks {
             }
         }
         Log.info("benchmark: done")
+    }
+
+    /// Dictation without a person: speak sample sentences with the Google voice, transcribe
+    /// the audio, tidy it with Claude, and log what came out at each step (sample text only).
+    private func sttTest(engine: DictationEngine) async {
+        var samples = [("Um, so I think we should, uh, ship the update to Pelles on Tuesday, no wait, Wednesday. Can you let the team know?", "en")]
+        if engine == .google { samples.append(("אממ, אני חושב שכדאי לשלוח את העדכון ביום שלישי, לא רגע, ביום רביעי. תעדכן את הצוות בבקשה.", "he")) }
+        for (text, language) in samples {
+            do {
+                let request = SpeechClient.Request(text: text, provider: .google, key: settings.speechKey(for: .google) ?? "",
+                                                   googleLocale: GoogleTTS.locale(for: language), googleVoice: "Charon", elevenVoiceID: "", elevenModel: .flash)
+                let (mp3, _) = try await speech.synthesize(request)
+                let audio = try PCMDecoder.decode(mp3)
+                let t0 = Date()
+                let raw = engine == .apple
+                    ? try await AppleTranscription.transcribe(audio)
+                    : try await speech.transcribe(audio, languages: settings.dictationLanguages.googleCodes, phrases: ["Pelles"])
+                let heard = Int(Date().timeIntervalSince(t0) * 1000)
+                let t1 = Date()
+                let cleaned = try? await client.cleanDictation(raw, app: "Slack", before: "", words: ["Pelles"], model: .haiku)
+                let tidied = Int(Date().timeIntervalSince(t1) * 1000)
+                let final = DictationText.choose(cleaned: cleaned, raw: raw)
+                Log.info("stt-test \(engine.rawValue) \(language): \(String(format: "%.1f", audio.seconds)) s audio | transcribed in \(heard) ms | tidied in \(tidied) ms")
+                Log.info("stt-test raw: \(raw)")
+                Log.info("stt-test final: \(final)")
+            } catch {
+                Log.info("stt-test \(engine.rawValue) \(language) error: \(error.localizedDescription)")
+            }
+        }
+        Log.info("stt-test: done")
     }
 
     /// Times the configured cloud voice on sample text without playing it. Sample text carries a

@@ -28,6 +28,15 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **Cost:** audio is cached in `~/Library/Caches/dev.lex.app/speech`, so hearing the same text again is free. Settings shows this month's characters.
   - **Mini player:** pause, speed (0.8×–2×) and stop.
 
+- **Dictation (like Wispr Flow):** hold **Right ⌥**, talk, let go, and the text is typed at your cursor in any app.
+  - **Hands-free:** double-tap the key, then tap once more to finish. Esc cancels.
+  - **No accidental starts:** a quick tap, or ⌥ used with another key (typing a special character), never dictates. fn 🌐 and Right ⌘ are options in Settings.
+  - **Engine:** Auto follows your keyboard.
+    - **English keyboard:** Apple's on-device recognizer. Free and private; a short sentence is typed about 0.5 s after release.
+    - **Hebrew keyboard:** Google Chirp 3 (Hebrew and English, about $0.016 per minute, through the gcloud sign-in). Long dictation is cut at natural pauses and sent while you talk, so only the last piece is left when you let go.
+  - **Tidy-up:** when a transcript has fillers or a spoken correction ("Tuesday, no wait, Wednesday"), or is long, Claude Haiku tidies it, keeping your words and language. If the result strays from the transcript, the raw transcript is used instead. **Words to know** in Settings are passed to both as spelling hints.
+  - **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
+
 Hover an underline to see the fix and apply it with a click. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
 
 ## Build
@@ -47,7 +56,8 @@ On first launch:
    gcloud auth application-default set-quota-project PROJECT_ID
    gcloud services enable texttospeech.googleapis.com --project PROJECT_ID
    ```
-   Then click **Check connection** in Settings › Read aloud.
+   Then click **Check connection** in Settings › Read aloud. For Hebrew dictation, also enable Speech-to-Text on the project: `gcloud services enable speech.googleapis.com --project PROJECT_ID`.
+4. Allow the microphone and Input Monitoring the first time you hold the talk key. Settings › Dictation shows both.
 
 ## Notes
 
@@ -70,6 +80,7 @@ On first launch:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first` and `refine-accept` drive the real fix and refine paths.
 - `speak:<text>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
+- `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
 
 The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
 
@@ -83,5 +94,6 @@ The field commands only act on TextEdit, or on text that starts with `LEXTEST`; 
 ## Layout
 
 - `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
+- `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, hotkeys, settings.
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, key tap and HUD, hotkeys, settings.
