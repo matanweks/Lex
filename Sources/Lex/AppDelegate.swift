@@ -323,8 +323,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fixAllItem.keyEquivalentModifierMask = settings.fixAllHotkey.menuModifiers
         menu.addItem(fixAllItem)
         for (title, action, preset) in [("Translate", #selector(translateFromMenu), settings.translateHotkey),
-                                        ("Check Tone", #selector(toneFromMenu), settings.toneHotkey),
-                                        ("Summarize & Reply", #selector(summarizeFromMenu), settings.assistHotkey)] {
+                                        ("Summarize & Reply", #selector(summarizeFromMenu), settings.assistHotkey),
+                                        ("Check Tone", #selector(toneFromMenu), settings.toneHotkey)] {
             let i = item(title, action)
             i.keyEquivalent = preset.menuKey
             i.keyEquivalentModifierMask = preset.menuModifiers

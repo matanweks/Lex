@@ -86,11 +86,11 @@ struct HotkeyPreset: Identifiable, Equatable {
         HotkeyPreset(id: "ctrl-opt-t", label: "⌃⌥T", keyCode: UInt32(kVK_ANSI_T), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "t", menuModifiers: [.control, .option]),
     ]
     static let tone: [HotkeyPreset] = [
-        HotkeyPreset(id: "ctrl-3", label: "⌃3", keyCode: UInt32(kVK_ANSI_3), carbonModifiers: UInt32(controlKey), menuKey: "3", menuModifiers: [.control]),
+        HotkeyPreset(id: "ctrl-4", label: "⌃4", keyCode: UInt32(kVK_ANSI_4), carbonModifiers: UInt32(controlKey), menuKey: "4", menuModifiers: [.control]),
         HotkeyPreset(id: "ctrl-opt-k", label: "⌃⌥K", keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "k", menuModifiers: [.control, .option]),
     ]
     static let assist: [HotkeyPreset] = [
-        HotkeyPreset(id: "ctrl-4", label: "⌃4", keyCode: UInt32(kVK_ANSI_4), carbonModifiers: UInt32(controlKey), menuKey: "4", menuModifiers: [.control]),
+        HotkeyPreset(id: "ctrl-3", label: "⌃3", keyCode: UInt32(kVK_ANSI_3), carbonModifiers: UInt32(controlKey), menuKey: "3", menuModifiers: [.control]),
         HotkeyPreset(id: "ctrl-opt-j", label: "⌃⌥J", keyCode: UInt32(kVK_ANSI_J), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "j", menuModifiers: [.control, .option]),
     ]
 
@@ -467,11 +467,11 @@ struct SettingsView: View {
                 Picker("Translate Hebrew ↔ English", selection: $settings.translateHotkeyID) {
                     ForEach(HotkeyPreset.translate) { Text($0.label).tag($0.id) }
                 }
-                Picker("Tone check", selection: $settings.toneHotkeyID) {
-                    ForEach(HotkeyPreset.tone) { Text($0.label).tag($0.id) }
-                }
                 Picker("Summarize & reply", selection: $settings.assistHotkeyID) {
                     ForEach(HotkeyPreset.assist) { Text($0.label).tag($0.id) }
+                }
+                Picker("Tone check", selection: $settings.toneHotkeyID) {
+                    ForEach(HotkeyPreset.tone) { Text($0.label).tag($0.id) }
                 }
                 Toggle("Show the issue badge next to the text field", isOn: $settings.showBadge)
                 Toggle("Open Lex at login", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
