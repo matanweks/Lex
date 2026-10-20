@@ -1,6 +1,24 @@
+<p align="center"><img src="docs/icon.png" width="128" alt="Lex icon"></p>
+
 # Lex
 
 A personal Grammarly for macOS that works in every app. It checks what you type as you type, refines a sentence the moment you finish it, and translates, summarizes, reads aloud and takes dictation, all from the keyboard.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/matanweks/Lex/main/scripts/install.sh | bash
+```
+
+This builds Lex on your Mac (about a minute), installs it in `~/Applications` and opens it. Look for the **L.** in your menu bar. A setup guide then walks you through the rest:
+
+1. **Allow Accessibility**, so Lex can read and fix text in other apps.
+2. **Add your Anthropic API key.** It stays in your Keychain.
+3. Optional: the microphone and Input Monitoring for dictation, and a Google Cloud sign-in for natural voices and Hebrew dictation.
+
+You need macOS 14 or later and Apple's Command Line Tools 26 or later; the installer offers to install them. Run the same command to update; your settings and key are kept. To open the guide again, choose **Setup Guide…** from the Lex menu.
+
+To uninstall, quit Lex and delete `~/Applications/Lex.app`. To remove its settings too, run `defaults delete dev.lex.app` and delete the `dev.lex.app` items in Keychain Access.
 
 ## Shortcuts
 
@@ -116,9 +134,9 @@ A capitalised name or term (Pelles, AppFab) that the spell checker flags but Cla
 - macOS 14 or later. Apple's on-device dictation and live words need macOS 26; on older systems dictation uses Google.
 - An Anthropic API key.
 - Optional: a Google Cloud project for the Google voices and Hebrew dictation, or an ElevenLabs key.
-- To build: Xcode 26 or later (the macOS 26 SDK, for Apple's speech recognizer).
+- To build: Xcode or Command Line Tools 26 or later (the macOS 26 SDK, for Apple's speech recognizer).
 
-## Build and set up
+## Build from source
 
 ```bash
 ./scripts/build.sh --open
@@ -126,9 +144,9 @@ A capitalised name or term (Pelles, AppFab) that the spell checker flags but Cla
 
 The script builds a release binary, wraps it as `Lex.app`, signs it with your Apple Development identity and installs it to `~/Applications`. A stable signature keeps the Accessibility grant and Keychain access across rebuilds; without an identity it signs ad hoc, and you re-allow Lex after each build.
 
-On first launch:
+The setup guide opens on first launch. In detail:
 1. Allow Lex under System Settings › Privacy & Security › Accessibility.
-2. Paste an Anthropic API key in Settings (it's stored in your Keychain), then click **Test connection**.
+2. Paste an Anthropic API key (it's stored in your Keychain); the guide checks that it works.
 3. For the Google voice, sign in once with gcloud. This works where your organisation blocks API keys; an API key in Settings works too. Lex reads the saved sign-in from `~/.config/gcloud/application_default_credentials.json` and refreshes its own access tokens:
    ```bash
    gcloud auth application-default login
@@ -144,6 +162,7 @@ On first launch:
 
 | Section | What's there |
 |---|---|
+| Lex | Version and **Setup Guide** |
 | Status and API key | Accessibility and key status, **Test connection** |
 | Models | The model for checking as you type (or off) and for refine |
 | Behavior | All panel shortcuts, the issue badge, open at login |
@@ -206,5 +225,7 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings.
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, and the brand colours and menu-bar mark.
+- `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
+- `Resources/`: `Info.plist` and `AppIcon.icns`.
 - `TestPages/`: browser test fields for the debug commands.

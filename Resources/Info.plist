@@ -6,6 +6,8 @@
 	<string>Lex</string>
 	<key>CFBundleExecutable</key>
 	<string>Lex</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.lex.app</string>
 	<key>CFBundleName</key>
@@ -13,7 +15,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -23,7 +25,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Personal build</string>
+	<string>Lex · github.com/matanweks/Lex</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Lex listens only while you hold the dictation key, to type what you say.</string>
 </dict>

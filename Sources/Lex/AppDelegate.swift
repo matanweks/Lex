@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var toneHotKey: HotKey?
     private var assistHotKey: HotKey?
     private var settingsWindow: NSWindow?
+    private var setupWindow: NSWindow?
     private var trustTimer: Timer?
     private var bag = Set<AnyCancellable>()
     private var debugHooks: DebugHooks?
@@ -97,11 +98,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.store(in: &bag)
 
         Log.info("launch: trusted=\(AX.isTrusted) key=\(settings.hasAPIKey) model=\(settings.liveModelID) refine=\(settings.refineModelID)")
+        // First launch, or something Lex needs is missing: the setup guide walks through it.
+        let needsSetup = !settings.onboarded || !settings.hasAPIKey || !AX.isTrusted
         if AX.isTrusted {
             engine.start()
             dictation.start()
         } else {
-            AX.promptForTrust()
+            if !needsSetup { AX.promptForTrust() }
             trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard AX.isTrusted else { return }
                 timer.invalidate()
@@ -110,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.updateIcon()
             }
         }
-        if !settings.hasAPIKey { openSettings() }
+        if needsSetup { openSetupGuide() }
         if settings.debugLog {
             debugHooks = DebugHooks(engine: engine, refine: refine, client: client, reader: reader, speech: speech, settings: settings) { [weak self] in self?.openRefine(scope: $0) }
             debugHooks?.dictation = dictation
@@ -328,11 +331,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu
 
     private func updateIcon() {
-        let symbol = !settings.enabled ? "pencil.slash" : (AX.isTrusted ? "pencil.line" : "exclamationmark.triangle")
-        // An orange dot while the Google sign-in needs renewing (Google voices and dictation are off).
+        // The app icon's "L." mark, dimmed while paused; a warning sign until Accessibility is allowed;
+        // an orange dot while the Google sign-in needs renewing (Google voices and dictation are off).
         let warn = google.expired && settings.enabled && AX.isTrusted
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: warn ? "Lex: Google sign-in expired" : "Lex")
-        image?.isTemplate = true
+        let image: NSImage?
+        if AX.isTrusted {
+            image = Brand.menuBarMark(dimmed: !settings.enabled)
+            image?.accessibilityDescription = warn ? "Lex: Google sign-in expired" : settings.enabled ? "Lex" : "Lex (paused)"
+        } else {
+            image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Lex needs Accessibility")
+            image?.isTemplate = true
+        }
         statusItem?.button?.image = image
         warningDot.isHidden = !warn
     }
@@ -389,6 +398,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(toggle)
         }
         menu.addItem(.separator())
+        menu.addItem(item("About Lex", #selector(showAbout)))
+        menu.addItem(item("Setup Guide…", #selector(openSetupGuideFromMenu)))
         let settingsItem = item("Settings…", #selector(openSettingsFromMenu))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
@@ -433,9 +444,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func signInToGoogle() { google.signIn() }
 
+    @objc private func openSetupGuideFromMenu() { openSetupGuide() }
+
+    private func openSetupGuide() {
+        if setupWindow == nil {
+            let view = OnboardingView(settings: settings, google: google, client: client,
+                                      onOpenSettings: { [weak self] in self?.openSettings() },
+                                      onDone: { [weak self] in self?.finishSetup() })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = "Lex Setup"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            setupWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        setupWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func finishSetup() {
+        if settings.hasAPIKey && AX.isTrusted { settings.onboarded = true }
+        setupWindow?.close()
+    }
+
+    @objc private func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        let credits = NSMutableAttributedString(string: Brand.tagline + "\n\n", attributes: [
+            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        credits.append(NSAttributedString(string: "github.com/matanweks/Lex", attributes: [
+            .font: NSFont.systemFont(ofSize: 11), .link: Brand.repo,
+        ]))
+        let centered = NSMutableParagraphStyle()
+        centered.alignment = .center
+        credits.addAttribute(.paragraphStyle, value: centered, range: NSRange(location: 0, length: credits.length))
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Lex", .credits: credits])
+    }
+
     private func openSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client, speech: speech, reader: reader, google: google)))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client, speech: speech, reader: reader, google: google,
+                                                                                               onOpenGuide: { [weak self] in self?.openSetupGuide() })))
             window.title = "Lex Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false

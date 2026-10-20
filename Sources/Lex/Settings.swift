@@ -145,6 +145,8 @@ final class AppSettings: ObservableObject {
     @Published var dictationLanguagesID: String { didSet { defaults.set(dictationLanguagesID, forKey: "dictationLanguages") } }
     @Published var dictationPolish: Bool { didSet { defaults.set(dictationPolish, forKey: "dictationPolish") } }
     @Published var dictationVoiceEdit: Bool { didSet { defaults.set(dictationVoiceEdit, forKey: "dictationVoiceEdit") } }
+    /// The setup guide was finished with everything Lex needs in place.
+    @Published var onboarded: Bool { didSet { defaults.set(onboarded, forKey: "onboarded") } }
     @Published var dictationWords: String { didSet { defaults.set(dictationWords, forKey: "dictationWords") } }
     @Published private(set) var hasElevenKey = false
     private var cachedSpeechKeys: [String: String] = [:]
@@ -176,6 +178,7 @@ final class AppSettings: ObservableObject {
             "dictationLanguages": DictationLanguages.englishHebrew.rawValue,
             "dictationPolish": true,
             "dictationVoiceEdit": true,
+            "onboarded": false,
             "dictationWords": "",
         ])
         enabled = defaults.bool(forKey: "enabled")
@@ -207,6 +210,7 @@ final class AppSettings: ObservableObject {
         dictationLanguagesID = defaults.string(forKey: "dictationLanguages") ?? DictationLanguages.englishHebrew.rawValue
         dictationPolish = defaults.bool(forKey: "dictationPolish")
         dictationVoiceEdit = defaults.bool(forKey: "dictationVoiceEdit")
+        onboarded = defaults.bool(forKey: "onboarded")
         dictationWords = defaults.string(forKey: "dictationWords") ?? ""
         hasAPIKey = !(apiKey() ?? "").isEmpty
         hasGoogleKey = !(speechKey(for: .google) ?? "").isEmpty
@@ -389,6 +393,7 @@ struct SettingsView: View {
     let speech: SpeechClient
     let reader: Reader
     @ObservedObject var google: GoogleSignIn
+    var onOpenGuide: () -> Void = {}
     @State private var googleKeyDraft = ""
     @State private var elevenKeyDraft = ""
     @State private var elevenVoices: [VoiceOption] = []
@@ -404,6 +409,22 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 14) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 52, height: 52)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Lex").font(.system(size: 20, weight: .bold))
+                        Text("Version \(Brand.version)").font(.caption).foregroundStyle(.secondary)
+                        Text(Brand.tagline).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Setup Guide", action: onOpenGuide)
+                }
+                .padding(.vertical, 4)
+            }
+
             Section("Status") {
                 HStack {
                     statusIcon(trusted)

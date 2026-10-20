@@ -9,6 +9,9 @@ final class GoogleSignIn: ObservableObject {
 
     static let loginCommand = "gcloud auth application-default login"
 
+    /// gcloud has saved a sign-in (it may still have expired).
+    var signedIn: Bool { speech.googleSignedIn }
+
     private let speech: SpeechClient
     private var timer: Timer?
 
