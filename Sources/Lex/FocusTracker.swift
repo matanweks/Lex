@@ -549,6 +549,8 @@ extension FocusTracker {
     /// clipboard once for the whole batch.
     func replaceAll(in snap: FieldSnapshot, fixes: [Issue], completion: @escaping (Int) -> Void) {
         queue.async {
+            // Where you were typing: each fix selects its words, so the cursor is put back after.
+            var caret = AX.range(snap.element, kAXSelectedTextRangeAttribute) ?? snap.selection
             Paster.beginBatch()
             var applied = 0
             for issue in fixes {
@@ -557,13 +559,17 @@ extension FocusTracker {
                                                    original: issue.original, replacement: issue.replacements[0])
                 guard outcome != .failed else { continue }
                 applied += 1
+                var after = before
                 for _ in 0..<30 {
-                    if AX.string(snap.element, kAXValueAttribute) != before { break }
+                    after = AX.string(snap.element, kAXValueAttribute)
+                    if after != before { break }
                     usleep(20_000)
                 }
+                if let before, let after { caret = CaretMapper.map(caret, before: before, after: after) }
             }
             Paster.endBatch()
-            Log.info("fix all: applied \(applied) of \(fixes.count) (\(snap.bundleID))")
+            let restored = applied > 0 && TextReplacer.select(snap.element, caret)
+            Log.info("fix all: applied \(applied) of \(fixes.count) (\(snap.bundleID)), cursor \(restored ? "restored" : "not restored")")
             DispatchQueue.main.async { completion(applied) }
         }
     }

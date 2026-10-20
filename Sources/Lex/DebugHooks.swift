@@ -136,6 +136,9 @@ final class DebugHooks {
             appAction?(command, "")
         case let c where c.hasPrefix("voice-edit:") && textEditFrontmost:
             appAction?("voice-edit", String(c.dropFirst("voice-edit:".count)))
+        case let c where c.hasPrefix("caret:") && textEditFrontmost:
+            guard let snap = engine.snapshot, let n = Int(c.dropFirst("caret:".count)) else { return }
+            DispatchQueue.global().async { Log.info("caret: \(TextReplacer.select(snap.element, NSRange(location: n, length: 0)) ? "ok" : "failed") at \(n)") }
         case let c where c.hasPrefix("select:") && textEditFrontmost:
             guard let snap = engine.snapshot else { return }
             let ns = snap.text as NSString
@@ -181,6 +184,11 @@ final class DebugHooks {
         case "dump-field" where textEditFrontmost:
             // Test fields only (see textEditFrontmost), never the user's writing.
             Log.info("field text: \(engine.snapshot?.text.replacingOccurrences(of: "\n", with: "⏎") ?? "nil")")
+            if let snap = engine.snapshot {
+                let ns = snap.text as NSString
+                let at = min(snap.selection.location, ns.length)
+                Log.info("field cursor: \(snap.selection) …\(ns.substring(with: NSRange(location: max(0, at - 12), length: at - max(0, at - 12))))|\(ns.substring(with: NSRange(location: at, length: min(12, ns.length - at))))…")
+            }
             Log.info("issues: " + engine.issues.map { "\($0.source.rawValue)/\($0.kind.rawValue) '\($0.original)'→'\($0.replacements.first ?? "")'" }.joined(separator: ", "))
         default:
             Log.info("ignored: unknown command, or the tracked field isn't TextEdit (it's \(engine.snapshot?.bundleID ?? "none"); frontmost \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"))")

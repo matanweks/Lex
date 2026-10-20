@@ -241,6 +241,33 @@ public enum RefineScope: String, CaseIterable, Sendable {
     }
 }
 
+/// Keeps the cursor where you left it while Lex edits other parts of the field.
+public enum CaretMapper {
+    /// Where `caret` (a cursor, or a selection) belongs after one edit turned `before` into
+    /// `after`. Edits before it shift it; edits after it leave it alone; an edit around it, or
+    /// text added right at it (a missing period), puts it at the end of the new text.
+    public static func map(_ caret: NSRange, before: String, after: String) -> NSRange {
+        let old = before as NSString, new = after as NSString
+        guard old != new else { return caret }
+        // The edit is what's left between the shared start and the shared end.
+        let limit = min(old.length, new.length)
+        var prefix = 0
+        while prefix < limit, old.character(at: prefix) == new.character(at: prefix) { prefix += 1 }
+        var suffix = 0
+        while suffix < limit - prefix, old.character(at: old.length - 1 - suffix) == new.character(at: new.length - 1 - suffix) { suffix += 1 }
+        let editEnd = old.length - suffix          // end of the replaced text, in `before`
+        let delta = new.length - old.length
+        func point(_ p: Int) -> Int {
+            if p >= editEnd { return p + delta }   // after the edit, or text added right at the cursor
+            if p <= prefix { return p }            // before the edit
+            return new.length - suffix             // inside it: the end of the new text
+        }
+        let start = min(point(caret.location), new.length)
+        let end = min(max(point(caret.location + caret.length), start), new.length)
+        return NSRange(location: start, length: end - start)
+    }
+}
+
 public enum TextTargets {
     /// What to refine: the selection if there is one, else the sentence just before the caret
     /// (the one you finished), widened to its paragraph or the whole field on request.

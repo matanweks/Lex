@@ -133,6 +133,31 @@ final class TargetTests: XCTestCase {
         XCTAssertEqual(start.map { ns.substring(with: $0) }, "Para one. Still one.")
     }
 
+    func testCaretStaysPutAcrossEdits() {
+        func at(_ p: Int) -> NSRange { NSRange(location: p, length: 0) }
+        // A fix before the cursor shifts it by the change in length.
+        XCTAssertEqual(CaretMapper.map(at(13), before: "I cant go now", after: "I can't go now"), at(14))
+        XCTAssertEqual(CaretMapper.map(at(11), before: "the the cat", after: "the cat"), at(7))
+        // A fix after the cursor leaves it alone.
+        XCTAssertEqual(CaretMapper.map(at(2), before: "I cant go now", after: "I can't go now"), at(2))
+        // Inside the letters that changed ("ie" → "ei"): right after the new ones.
+        XCTAssertEqual(CaretMapper.map(at(7), before: "we recieve it", after: "we receive it"), at(8))
+        // A period added right at the cursor: the cursor goes after it.
+        XCTAssertEqual(CaretMapper.map(at(9), before: "I am here", after: "I am here."), at(10))
+        // A selection keeps covering the same words.
+        XCTAssertEqual(CaretMapper.map(NSRange(location: 10, length: 3), before: "I cant go now", after: "I can't go now"),
+                       NSRange(location: 11, length: 3))
+        // Fixes applied last-first (as Fix All does) add up.
+        var caret = at(24)
+        var text = "Their going to recieve it"
+        for (from, to) in [("recieve", "receive"), ("Their", "They're")] {
+            let next = text.replacingOccurrences(of: from, with: to)
+            caret = CaretMapper.map(caret, before: text, after: next)
+            text = next
+        }
+        XCTAssertEqual(caret, at(26))
+    }
+
     func testWordBeingTyped() {
         XCTAssertEqual(TextTargets.wordBeingTyped(in: "hello wor", caret: 9), NSRange(location: 6, length: 3))
         XCTAssertNil(TextTargets.wordBeingTyped(in: "hello ", caret: 6))

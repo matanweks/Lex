@@ -55,6 +55,7 @@ A panel streams a rewrite from Claude Sonnet 5.5 (changeable in Settings), with 
 - **What's included:** spelling, grammar, punctuation and word choice. Clarity rewrites stay manual. The word you just typed counts too.
 - **Accuracy:** Lex first has Claude check any sentence it hasn't reviewed, waiting up to 2.5 s, so a name only the spell checker flagged isn't "fixed".
 - **How fixes go in:** fixes are applied one by one from the end of the text, so formatting such as @mentions survives. Each waits until the app has taken the previous one, and your clipboard is saved and restored once for the whole batch.
+- **Your cursor stays put:** afterwards the cursor goes back where you were typing, moved along by any fixes before it.
 
 ### Translate (⌃2)
 
@@ -178,7 +179,7 @@ On first launch:
 
 `swift test` runs the core tests. With debug logging on, Lex also accepts commands posted as the distributed notification `dev.lex.debug`:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
-- `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths.
+- `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths; `caret:<n>` puts the cursor at a position, and `dump-field` logs where it is.
 - `translate`, `tone`, `summarize`, `voice-edit:<instruction>`, `select:<text>`, `panel-state`, `panel-accept` and `panel-close` drive the panels.
 - `google-state` logs the Google sign-in state and where gcloud is; `google-preview:on|off` shows the expired-sign-in look without touching the sign-in; `status-item` logs where the menu-bar icon is.
 - `speak:<text>`, `speak-skip:<seconds>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
