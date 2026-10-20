@@ -15,6 +15,8 @@ final class Recorder {
     private let lock = NSLock()
     private var buffer: [Int16] = []
     var onLevel: ((Float) -> Void)?
+    /// Each converted chunk, on the audio thread (for live transcription).
+    var onChunk: (([Int16]) -> Void)?
 
     static var permission: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .audio) }
 
@@ -61,6 +63,7 @@ final class Recorder {
         guard error == nil, let channel = out.int16ChannelData, out.frameLength > 0 else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
         lock.lock(); buffer.append(contentsOf: chunk); lock.unlock()
+        onChunk?(chunk)
         var sum: Float = 0
         for s in chunk { let f = Float(s) / 32768; sum += f * f }
         let level = (sum / Float(chunk.count)).squareRoot()
@@ -247,6 +250,96 @@ enum AppleTranscription {
     }
 }
 
+/// Apple's on-device English, fed while you talk: the HUD shows the words as they come, and
+/// the final text is ready almost the moment you let go.
+@available(macOS 26.0, *)
+final class AppleLiveSession {
+    private let (chunks, feeder) = AsyncStream<[Int16]>.makeStream()
+    private var task: Task<String, Error>?
+    /// The words so far (settled plus still-changing), on the main thread.
+    var onText: ((String) -> Void)?
+
+    func start() {
+        let chunks = self.chunks
+        task = Task { [weak self] in
+            let transcriber = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
+            if let install = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                try await install.downloadAndInstall()
+            }
+            let analyzer = SpeechAnalyzer(modules: [transcriber])
+            let source = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(PCM16.sampleRate), channels: 1, interleaved: true)!
+            let wanted = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) ?? source
+            let converter = wanted == source ? nil : AVAudioConverter(from: source, to: wanted)
+            let (input, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+            let collector = Task { () -> String in
+                var settled = ""
+                for try await result in transcriber.results {
+                    let text = String(result.text.characters)
+                    let shown: String
+                    if result.isFinal {
+                        settled += text
+                        shown = settled
+                    } else {
+                        shown = settled + text
+                    }
+                    await MainActor.run { self?.onText?(shown.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                }
+                return settled
+            }
+            try await analyzer.start(inputSequence: input)
+            for await chunk in chunks {
+                guard let buffer = Self.buffer(chunk, format: source) else { continue }
+                if let converter {
+                    guard let converted = Self.convert(buffer, with: converter, to: wanted) else { continue }
+                    continuation.yield(AnalyzerInput(buffer: converted))
+                } else {
+                    continuation.yield(AnalyzerInput(buffer: buffer))
+                }
+            }
+            continuation.finish()
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            return try await collector.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    /// Called from the audio thread.
+    func feed(_ chunk: [Int16]) { feeder.yield(chunk) }
+
+    /// Stops feeding and returns the final text.
+    func finish() async throws -> String {
+        feeder.finish()
+        guard let task else { return "" }
+        return try await task.value
+    }
+
+    func cancel() {
+        feeder.finish()
+        task?.cancel()
+    }
+
+    private static func buffer(_ samples: [Int16], format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty, let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else { return nil }
+        pcm.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { src in pcm.int16ChannelData![0].update(from: src.baseAddress!, count: src.count) }
+        return pcm
+    }
+
+    /// Streaming conversion: the converter keeps its state between chunks.
+    private static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate + 32)
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        return error == nil && out.frameLength > 0 ? out : nil
+    }
+}
+
 // MARK: The flow
 
 final class DictationModel: ObservableObject {
@@ -254,6 +347,10 @@ final class DictationModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var levels: [Float] = Array(repeating: 0, count: 24)
     @Published var keyLabel = "Right ⌥"
+    /// Words heard so far, shown in the HUD while you talk.
+    @Published var liveText = ""
+    /// Text was selected when you started: what you say is an instruction for it.
+    @Published var command = false
 }
 
 /// Hold the key, talk, let go: Lex records, transcribes, tidies the text with Claude and
@@ -277,7 +374,12 @@ final class DictationController {
     private var run = UUID()
     private var holding = false
     private var engineNow: DictationEngine = .google
+    private var live: AnyObject?          // AppleLiveSession on macOS 26+
+    private var pieceTexts: [String?] = []
+    private var commandAtPress = false
     private(set) var lastDictation: String?
+    /// Speech said over a selection: an instruction for changing it ("make this friendlier").
+    var onCommand: ((String) -> Void)?
 
     var isActive: Bool { model.phase != .idle || holding }
 
@@ -352,6 +454,7 @@ final class DictationController {
         case .idle:
             // A tap: discard, and remember it in case a second tap locks hands-free mode.
             stopRecording()
+            stopLive()
             lastTapAt = Date()
         case .listening:
             finish()
@@ -384,8 +487,21 @@ final class DictationController {
             return false
         }
         run = UUID()
+        let id = run
         pieces = []
+        pieceTexts = []
         sentUpTo = 0
+        commandAtPress = false
+        model.command = false
+        model.liveText = ""
+        if settings.dictationVoiceEdit {
+            tracker.selection { [weak self] selection in
+                guard let self, self.run == id, case .selected = selection else { return }
+                self.commandAtPress = true
+                self.model.command = true
+                if self.model.phase != .idle { self.hud.show() }
+            }
+        }
         if #available(macOS 26.0, *) {
             engineNow = settings.dictationEngine.resolved(keyboardLanguage: Self.keyboardLanguage(), appleAvailable: true)
         } else {
@@ -393,9 +509,12 @@ final class DictationController {
         }
         Log.info("dictation: listening with \(engineNow.rawValue) (keyboard \(Self.keyboardLanguage() ?? "?"))")
         model.levels = Array(repeating: 0, count: model.levels.count)
+        stopLive()
+        startLive(run: id)
         do {
             try recorder.start()
         } catch {
+            stopLive()
             Toast.show("Couldn't start the microphone: \(error.localizedDescription)")
             return false
         }
@@ -410,6 +529,31 @@ final class DictationController {
         segmentTimer?.invalidate()
         segmentTimer = nil
         recorder.stop()
+        recorder.onChunk = nil
+    }
+
+    /// With Apple's engine, transcribe while you talk so the words show up as you say them.
+    private func startLive(run id: UUID) {
+        guard engineNow == .apple, #available(macOS 26.0, *) else { return }
+        let session = AppleLiveSession()
+        session.onText = { [weak self] text in
+            guard let self, self.run == id, self.model.phase == .listening || self.model.phase == .locked else { return }
+            self.showLive(text)
+        }
+        session.start()
+        recorder.onChunk = { [weak session] chunk in session?.feed(chunk) }
+        live = session
+    }
+
+    private func stopLive() {
+        if #available(macOS 26.0, *) { (live as? AppleLiveSession)?.cancel() }
+        live = nil
+    }
+
+    private func showLive(_ text: String) {
+        let grew = model.liveText.isEmpty != text.isEmpty
+        model.liveText = text
+        if grew, model.phase != .idle { hud.show() }
     }
 
     private func sendFinishedPiece() {
@@ -427,21 +571,53 @@ final class DictationController {
         let phrases = settings.dictationWordList
         let speech = self.speech
         let settings = self.settings
-        return Task {
+        let index = pieceTexts.count
+        pieceTexts.append(nil)
+        let id = run
+        return Task { [weak self] in
             let text = try await speech.transcribe(audio, languages: languages, phrases: phrases)
-            await MainActor.run { settings.addDictationSeconds(audio.seconds) }
+            await MainActor.run {
+                settings.addDictationSeconds(audio.seconds)
+                self?.pieceHeard(text, at: index, run: id)
+            }
             return text
         }
+    }
+
+    /// Long Google dictation: show each piece as soon as it's back.
+    private func pieceHeard(_ text: String, at index: Int, run id: UUID) {
+        guard run == id, index < pieceTexts.count else { return }
+        pieceTexts[index] = text
+        guard model.phase == .listening || model.phase == .locked else { return }
+        showLive(DictationText.join(pieceTexts.prefix { $0 != nil }.compactMap { $0 }))
     }
 
     // MARK: Finishing
 
     private func finish() {
-        let id = run
+        let session = live
+        live = nil
         stopRecording()
-        let all = recorder.samples(from: 0)
+        complete(recorder.samples(from: 0), live: session)
+    }
+
+    /// Test support: runs recorded audio through the same steps as letting go of the key.
+    func simulate(_ audio: PCM16, engine: DictationEngine) {
+        guard model.phase == .idle, !holding else { return }
+        run = UUID()
+        pieces = []
+        pieceTexts = []
+        sentUpTo = 0
+        engineNow = engine
+        commandAtPress = false
+        complete(audio.samples, live: nil)
+    }
+
+    private func complete(_ all: [Int16], live session: AnyObject?) {
+        let id = run
         guard !PauseSegmenter.isSilent(all) else {
             Log.info("dictation: nothing heard")
+            if #available(macOS 26.0, *) { (session as? AppleLiveSession)?.cancel() }
             reset()
             return
         }
@@ -451,9 +627,17 @@ final class DictationController {
         let engine = engineNow
         let tail = Array(all[min(sentUpTo, all.count)...])
         let parts = engine == .google ? pieces + (tail.isEmpty ? [] : [transcribeTask(tail)]) : []
-        let polish = settings.dictationPolish && settings.hasAPIKey
+        let hasKey = settings.hasAPIKey
+        let polish = settings.dictationPolish && hasKey
+        let translateHebrew = settings.dictationTranslateHebrew && hasKey
+        let voiceEdit = settings.dictationVoiceEdit
+        let commandAtPress = self.commandAtPress
+        let snippets = settings.snippets
         let words = settings.dictationWordList
         let cleanupModel = settings.liveModel ?? .haiku
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let style = settings.style(for: bundleID)
+        let voice = settings.activeVoice
         let claude = self.claude
         let audioSeconds = Double(all.count) / 16000
 
@@ -461,14 +645,29 @@ final class DictationController {
             guard let self, self.run == id else { return }
             let app = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
             var before = ""
-            if case .caret(let value, let range) = selection {
+            var selected = false
+            switch selection {
+            case .caret(let value, let range):
                 before = (value as NSString).substring(to: min(range.location, (value as NSString).length))
+            case .selected:
+                selected = true
+            default:
+                break
             }
+            let command = voiceEdit && (selected || commandAtPress)
             Task {
                 do {
-                    let raw: String
+                    var raw = ""
+                    var how = engine.rawValue
                     if engine == .apple {
-                        raw = try await AppleTranscription.transcribe(PCM16(samples: all))
+                        if #available(macOS 26.0, *), let live = session as? AppleLiveSession {
+                            raw = (try? await live.finish()) ?? ""
+                            how = "apple live"
+                        }
+                        if raw.isEmpty {
+                            raw = try await AppleTranscription.transcribe(PCM16(samples: all))
+                            how = "apple batch"
+                        }
                     } else {
                         var texts: [String] = []
                         for part in parts { texts.append(try await part.value) }
@@ -483,18 +682,38 @@ final class DictationController {
                         }
                         return
                     }
+                    if command {
+                        let instruction = raw, via = how
+                        await MainActor.run {
+                            guard self.run == id else { return }
+                            Log.info("dictation: voice edit after \(Int(heard * 1000)) ms via \(via)")
+                            self.reset()
+                            self.onCommand?(instruction)
+                        }
+                        return
+                    }
                     var final = raw
-                    let tidy = polish && DictationText.needsTidy(raw)
-                    if tidy {
-                        await MainActor.run { if self.run == id { self.model.phase = .polishing } }
-                        let cleaned = try? await claude.cleanDictation(raw, app: app, before: before, words: words, model: cleanupModel)
-                        final = DictationText.choose(cleaned: cleaned, raw: raw)
+                    var tidied = false
+                    var snippetUsed = false
+                    if let snippet = Snippets.spokenMatch(raw, in: snippets) {
+                        final = snippet.text
+                        snippetUsed = true
+                    } else {
+                        let translateTo = translateHebrew && SpeechText.language(of: raw) == "he" ? "English" : nil
+                        if translateTo != nil || (polish && DictationText.needsTidy(raw)) {
+                            tidied = true
+                            await MainActor.run { if self.run == id { self.model.phase = .polishing } }
+                            let cleaned = try? await claude.cleanDictation(raw, app: app, before: before, words: words, model: cleanupModel,
+                                                                           style: style, voice: voice, translateTo: translateTo)
+                            final = DictationText.choose(cleaned: cleaned, raw: raw, translated: translateTo != nil)
+                        }
                     }
                     let total = Date().timeIntervalSince(started)
+                    let text = final, via = how, didTidy = tidied, usedSnippet = snippetUsed, typedBefore = before
                     await MainActor.run {
                         guard self.run == id else { return }
-                        Log.info("dictation: \(String(format: "%.1f", audioSeconds)) s of audio via \(engine.rawValue), transcript after \(Int(heard * 1000)) ms, typed after \(Int(total * 1000)) ms (\(parts.count) pieces, tidied \(tidy))")
-                        self.insert(final, before: before)
+                        Log.info("dictation: \(String(format: "%.1f", audioSeconds)) s of audio via \(via), transcript after \(Int(heard * 1000)) ms, typed after \(Int(total * 1000)) ms (\(parts.count) pieces, tidied \(didTidy), snippet \(usedSnippet))")
+                        self.insert(text, before: typedBefore)
                     }
                 } catch {
                     await MainActor.run {
@@ -535,7 +754,11 @@ final class DictationController {
         revealWork?.cancel()
         pieces.forEach { $0.cancel() }
         pieces = []
+        pieceTexts = []
+        stopLive()
         model.phase = .idle
+        model.liveText = ""
+        model.command = false
         hud.hide()
     }
 }
@@ -560,7 +783,13 @@ struct DictationHUDView: View {
             } else {
                 ProgressView().controlSize(.small)
             }
-            Text(label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            if showsLive {
+                // The words so far; the newest stay in view.
+                Text(model.liveText).font(.system(size: 12)).lineLimit(1).truncationMode(.head)
+                    .frame(width: 260, alignment: .leading)
+            } else {
+                Text(label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            }
             Button(action: onCancel) {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18)
                     .background(Circle().fill(Color.primary.opacity(0.08)))
@@ -574,10 +803,14 @@ struct DictationHUDView: View {
         .panelBackground(radius: 20)
     }
 
+    private var showsLive: Bool {
+        (model.phase == .listening || model.phase == .locked) && !model.liveText.isEmpty
+    }
+
     private var label: String {
         switch model.phase {
-        case .listening: return "Listening"
-        case .locked: return "Listening. Tap \(model.keyLabel) to finish"
+        case .listening: return model.command ? "Say how to change the selection" : "Listening"
+        case .locked: return model.command ? "Say how to change it. Tap \(model.keyLabel) to finish" : "Listening. Tap \(model.keyLabel) to finish"
         case .transcribing: return "Transcribing…"
         case .polishing: return "Tidying up…"
         case .idle: return ""

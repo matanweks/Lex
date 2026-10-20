@@ -80,6 +80,21 @@ struct HotkeyPreset: Identifiable, Equatable {
     ]
 
     static func findFixAll(_ id: String) -> HotkeyPreset { fixAll.first { $0.id == id } ?? fixAll[0] }
+
+    static let translate: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-2", label: "⌃2", keyCode: UInt32(kVK_ANSI_2), carbonModifiers: UInt32(controlKey), menuKey: "2", menuModifiers: [.control]),
+        HotkeyPreset(id: "ctrl-opt-t", label: "⌃⌥T", keyCode: UInt32(kVK_ANSI_T), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "t", menuModifiers: [.control, .option]),
+    ]
+    static let tone: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-3", label: "⌃3", keyCode: UInt32(kVK_ANSI_3), carbonModifiers: UInt32(controlKey), menuKey: "3", menuModifiers: [.control]),
+        HotkeyPreset(id: "ctrl-opt-k", label: "⌃⌥K", keyCode: UInt32(kVK_ANSI_K), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "k", menuModifiers: [.control, .option]),
+    ]
+    static let assist: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-4", label: "⌃4", keyCode: UInt32(kVK_ANSI_4), carbonModifiers: UInt32(controlKey), menuKey: "4", menuModifiers: [.control]),
+        HotkeyPreset(id: "ctrl-opt-j", label: "⌃⌥J", keyCode: UInt32(kVK_ANSI_J), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "j", menuModifiers: [.control, .option]),
+    ]
+
+    static func find(_ id: String, in list: [HotkeyPreset]) -> HotkeyPreset { list.first { $0.id == id } ?? list[0] }
 }
 
 final class AppSettings: ObservableObject {
@@ -111,6 +126,17 @@ final class AppSettings: ObservableObject {
     @Published var speechSpeed: Double { didSet { defaults.set(speechSpeed, forKey: "speechSpeed") } }
     @Published var speakHotkeyID: String { didSet { defaults.set(speakHotkeyID, forKey: "speakHotkey") } }
     @Published var fixAllHotkeyID: String { didSet { defaults.set(fixAllHotkeyID, forKey: "fixAllHotkey") } }
+    @Published var translateHotkeyID: String { didSet { defaults.set(translateHotkeyID, forKey: "translateHotkey") } }
+    @Published var toneHotkeyID: String { didSet { defaults.set(toneHotkeyID, forKey: "toneHotkey") } }
+    @Published var assistHotkeyID: String { didSet { defaults.set(assistHotkeyID, forKey: "assistHotkey") } }
+    @Published var dictationTranslateHebrew: Bool { didSet { defaults.set(dictationTranslateHebrew, forKey: "dictationTranslateHebrew") } }
+    @Published var learnedWords: [String] { didSet { defaults.set(learnedWords, forKey: "learnedWords") } }
+    @Published var snippets: [Snippet] { didSet { defaults.set(try? JSONEncoder().encode(snippets), forKey: "snippets") } }
+    @Published var styles: [String: String] { didSet { defaults.set(styles, forKey: "styles") } }
+    @Published var learnVoice: Bool { didSet { defaults.set(learnVoice, forKey: "learnVoice") } }
+    @Published var useVoice: Bool { didSet { defaults.set(useVoice, forKey: "useVoice") } }
+    @Published var voiceProfile: String { didSet { defaults.set(voiceProfile, forKey: "voiceProfile") } }
+    @Published private(set) var voiceSamples: [String] { didSet { defaults.set(voiceSamples, forKey: "voiceSamples") } }
     @Published private(set) var hasGoogleKey = false
 
     // Dictation
@@ -118,6 +144,7 @@ final class AppSettings: ObservableObject {
     @Published var dictationEngineID: String { didSet { defaults.set(dictationEngineID, forKey: "dictationEngine") } }
     @Published var dictationLanguagesID: String { didSet { defaults.set(dictationLanguagesID, forKey: "dictationLanguages") } }
     @Published var dictationPolish: Bool { didSet { defaults.set(dictationPolish, forKey: "dictationPolish") } }
+    @Published var dictationVoiceEdit: Bool { didSet { defaults.set(dictationVoiceEdit, forKey: "dictationVoiceEdit") } }
     @Published var dictationWords: String { didSet { defaults.set(dictationWords, forKey: "dictationWords") } }
     @Published private(set) var hasElevenKey = false
     private var cachedSpeechKeys: [String: String] = [:]
@@ -138,10 +165,17 @@ final class AppSettings: ObservableObject {
             "speechSpeed": 1.0,
             "speakHotkey": HotkeyPreset.speak[0].id,
             "fixAllHotkey": HotkeyPreset.fixAll[0].id,
+            "translateHotkey": HotkeyPreset.translate[0].id,
+            "toneHotkey": HotkeyPreset.tone[0].id,
+            "assistHotkey": HotkeyPreset.assist[0].id,
+            "dictationTranslateHebrew": false,
+            "learnVoice": false,
+            "useVoice": true,
             "dictationKey": DictationKey.rightOption.rawValue,
             "dictationEngine": DictationEngine.auto.rawValue,
             "dictationLanguages": DictationLanguages.englishHebrew.rawValue,
             "dictationPolish": true,
+            "dictationVoiceEdit": true,
             "dictationWords": "",
         ])
         enabled = defaults.bool(forKey: "enabled")
@@ -157,10 +191,22 @@ final class AppSettings: ObservableObject {
         speechSpeed = defaults.double(forKey: "speechSpeed")
         speakHotkeyID = defaults.string(forKey: "speakHotkey") ?? HotkeyPreset.speak[0].id
         fixAllHotkeyID = defaults.string(forKey: "fixAllHotkey") ?? HotkeyPreset.fixAll[0].id
+        translateHotkeyID = defaults.string(forKey: "translateHotkey") ?? HotkeyPreset.translate[0].id
+        toneHotkeyID = defaults.string(forKey: "toneHotkey") ?? HotkeyPreset.tone[0].id
+        assistHotkeyID = defaults.string(forKey: "assistHotkey") ?? HotkeyPreset.assist[0].id
+        dictationTranslateHebrew = defaults.bool(forKey: "dictationTranslateHebrew")
+        learnedWords = defaults.stringArray(forKey: "learnedWords") ?? []
+        snippets = (defaults.data(forKey: "snippets")).flatMap { try? JSONDecoder().decode([Snippet].self, from: $0) } ?? []
+        styles = (defaults.dictionary(forKey: "styles") as? [String: String]) ?? [:]
+        learnVoice = defaults.bool(forKey: "learnVoice")
+        useVoice = defaults.bool(forKey: "useVoice")
+        voiceProfile = defaults.string(forKey: "voiceProfile") ?? ""
+        voiceSamples = defaults.stringArray(forKey: "voiceSamples") ?? []
         dictationKeyID = defaults.string(forKey: "dictationKey") ?? DictationKey.rightOption.rawValue
         dictationEngineID = defaults.string(forKey: "dictationEngine") ?? DictationEngine.auto.rawValue
         dictationLanguagesID = defaults.string(forKey: "dictationLanguages") ?? DictationLanguages.englishHebrew.rawValue
         dictationPolish = defaults.bool(forKey: "dictationPolish")
+        dictationVoiceEdit = defaults.bool(forKey: "dictationVoiceEdit")
         dictationWords = defaults.string(forKey: "dictationWords") ?? ""
         hasAPIKey = !(apiKey() ?? "").isEmpty
         hasGoogleKey = !(speechKey(for: .google) ?? "").isEmpty
@@ -172,7 +218,8 @@ final class AppSettings: ObservableObject {
     var dictationEngine: DictationEngine { DictationEngine(rawValue: dictationEngineID) ?? .auto }
     var dictationLanguages: DictationLanguages { DictationLanguages(rawValue: dictationLanguagesID) ?? .englishHebrew }
     var dictationWordList: [String] {
-        dictationWords.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let typed = dictationWords.split(whereSeparator: { $0 == "," || $0 == "\n" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return typed + learnedWords.filter { !typed.contains($0) }
     }
 
     /// Seconds of audio sent to Google this month.
@@ -191,6 +238,47 @@ final class AppSettings: ObservableObject {
     var elevenModel: ElevenLabsTTS.Model { ElevenLabsTTS.Model(rawValue: elevenModelID) ?? .flash }
     var speakHotkey: HotkeyPreset { HotkeyPreset.findSpeak(speakHotkeyID) }
     var fixAllHotkey: HotkeyPreset { HotkeyPreset.findFixAll(fixAllHotkeyID) }
+    var translateHotkey: HotkeyPreset { HotkeyPreset.find(translateHotkeyID, in: HotkeyPreset.translate) }
+    var toneHotkey: HotkeyPreset { HotkeyPreset.find(toneHotkeyID, in: HotkeyPreset.tone) }
+    var assistHotkey: HotkeyPreset { HotkeyPreset.find(assistHotkeyID, in: HotkeyPreset.assist) }
+
+    /// How text should read in this app: your edit, or the default for its kind of app.
+    func style(for bundleID: String) -> String {
+        let context = WritingContext.of(bundleID: bundleID)
+        return styles[context.rawValue] ?? WritingContext.defaultStyle[context] ?? ""
+    }
+
+    func styleBinding(_ context: WritingContext) -> String {
+        styles[context.rawValue] ?? WritingContext.defaultStyle[context] ?? ""
+    }
+
+    /// Your voice profile, when you've built one and turned it on.
+    var activeVoice: String { useVoice ? voiceProfile.trimmingCharacters(in: .whitespacesAndNewlines) : "" }
+
+    /// Remembers a name or term so it's never flagged and dictation spells it right.
+    func learn(_ word: String) {
+        guard !learnedWords.contains(word) else { return }
+        NSSpellChecker.shared.learnWord(word)
+        learnedWords.append(word)
+        Log.info("learned a word (\(learnedWords.count) learned)")
+    }
+
+    func unlearn(_ word: String) {
+        NSSpellChecker.shared.unlearnWord(word)
+        learnedWords.removeAll { $0 == word }
+    }
+
+    /// A sentence you wrote, kept on this Mac for building your voice profile (at most 40).
+    func addVoiceSample(_ sentence: String) {
+        guard learnVoice, !voiceSamples.contains(sentence) else { return }
+        voiceSamples.append(sentence)
+        if voiceSamples.count > 40 { voiceSamples.removeFirst(voiceSamples.count - 40) }
+    }
+
+    func clearVoice() {
+        voiceSamples = []
+        voiceProfile = ""
+    }
 
     private static func account(for provider: SpeechProvider) -> String? {
         switch provider {
@@ -376,9 +464,22 @@ struct SettingsView: View {
                 Picker("Fix all mistakes", selection: $settings.fixAllHotkeyID) {
                     ForEach(HotkeyPreset.fixAll) { Text($0.label).tag($0.id) }
                 }
+                Picker("Translate Hebrew ↔ English", selection: $settings.translateHotkeyID) {
+                    ForEach(HotkeyPreset.translate) { Text($0.label).tag($0.id) }
+                }
+                Picker("Tone check", selection: $settings.toneHotkeyID) {
+                    ForEach(HotkeyPreset.tone) { Text($0.label).tag($0.id) }
+                }
+                Picker("Summarize & reply", selection: $settings.assistHotkeyID) {
+                    ForEach(HotkeyPreset.assist) { Text($0.label).tag($0.id) }
+                }
                 Toggle("Show the issue badge next to the text field", isOn: $settings.showBadge)
                 Toggle("Open Lex at login", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
             }
+
+            styleSection
+
+            snippetsSection
 
             readAloudSection
 
@@ -408,12 +509,126 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 780)
+        .frame(width: 580, height: 820)
         .onReceive(trustPoll) { _ in
             if AX.isTrusted != trusted { trusted = AX.isTrusted }
             let creds = speech.adc.credentials()
             if (creds != nil) != googleSignedIn { googleSignedIn = creds != nil }
             if creds?.quotaProject != googleProject { googleProject = creds?.quotaProject }
+        }
+    }
+
+    // MARK: Your style
+
+    @State private var buildingVoice = false
+    @State private var voiceError: String?
+
+    @ViewBuilder private var styleSection: some View {
+        Section {
+            ForEach(WritingContext.allCases) { context in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(context.label).font(.caption).foregroundStyle(.secondary)
+                    TextField(context.label, text: Binding(get: { settings.styleBinding(context) },
+                                                           set: { settings.styles[context.rawValue] = $0 }),
+                              prompt: Text("No preference"), axis: .vertical)
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...3)
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Your voice").font(.caption).foregroundStyle(.secondary)
+                TextField("Your voice", text: $settings.voiceProfile,
+                          prompt: Text("How you write: short and direct, \"Thanks!\" not \"Best regards\"… or build it below"), axis: .vertical)
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...6)
+            }
+            Toggle("Write in my voice when refining, fixing tone and drafting replies", isOn: $settings.useVoice)
+                .disabled(settings.voiceProfile.trimmingCharacters(in: .whitespaces).isEmpty)
+            Toggle("Collect sentences I write to build my voice (kept on this Mac)", isOn: $settings.learnVoice)
+            HStack {
+                Button(buildingVoice ? "Building…" : "Build my voice from \(settings.voiceSamples.count) sentences") { buildVoice() }
+                    .disabled(settings.voiceSamples.count < 8 || buildingVoice || !settings.hasAPIKey)
+                Spacer()
+                Button("Clear") { settings.clearVoice() }
+                    .disabled(settings.voiceSamples.isEmpty && settings.voiceProfile.isEmpty)
+            }
+            if let voiceError {
+                Text(voiceError).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+            } else if settings.learnVoice, settings.voiceSamples.count < 8 {
+                Text("Needs at least 8 clean sentences of yours; \(settings.voiceSamples.count) so far.").font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Your style")
+        } footer: {
+            Text("Refine, tone fixes and dictation follow the style for the app you're in. Building your voice sends the collected sentences to Claude once.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func buildVoice() {
+        buildingVoice = true
+        voiceError = nil
+        let samples = settings.voiceSamples
+        let model = settings.refineModel
+        Task {
+            do {
+                let profile = try await client.voiceProfile(samples: samples, model: model)
+                await MainActor.run {
+                    settings.voiceProfile = profile
+                    settings.useVoice = true
+                    buildingVoice = false
+                }
+            } catch {
+                await MainActor.run {
+                    voiceError = error.localizedDescription
+                    buildingVoice = false
+                }
+            }
+        }
+    }
+
+    // MARK: Snippets
+
+    @ViewBuilder private var snippetsSection: some View {
+        Section {
+            if settings.snippets.isEmpty {
+                Text("None yet").foregroundStyle(.secondary)
+            }
+            ForEach($settings.snippets) { $snippet in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        TextField("Name", text: $snippet.name, prompt: Text("Name you say: my calendar link"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Trigger", text: $snippet.trigger, prompt: Text(";cal"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                        Button {
+                            settings.snippets.removeAll { $0.id == snippet.id }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Delete this snippet")
+                    }
+                    TextField("Text", text: $snippet.text, prompt: Text("The text it inserts"), axis: .vertical)
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...5)
+                }
+                .padding(.vertical, 2)
+            }
+            Button("Add snippet") {
+                settings.snippets.append(Snippet(name: "", trigger: "", text: ""))
+            }
+        } header: {
+            Text("Snippets")
+        } footer: {
+            Text("While dictating, say the name (\"insert my calendar link\"). While typing, type the trigger and a space.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -463,10 +678,26 @@ struct SettingsView: View {
                 }
             }
             Toggle("Tidy up with Claude: drop \"um\"s, apply \"no wait…\" corrections, fix punctuation", isOn: $settings.dictationPolish)
+            Toggle("Talk over selected text to change it (\"make this friendlier\")", isOn: $settings.dictationVoiceEdit)
+            Toggle("Type Hebrew speech in English", isOn: $settings.dictationTranslateHebrew)
+                .disabled(!settings.hasAPIKey)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Words to know")
                 TextField("Names and terms, comma separated: Pelles, Procore, Trimble", text: $settings.dictationWords)
                     .textFieldStyle(.roundedBorder)
+            }
+            if !settings.learnedWords.isEmpty {
+                DisclosureGroup("Learned words (\(settings.learnedWords.count))") {
+                    ForEach(settings.learnedWords, id: \.self) { word in
+                        HStack {
+                            Text(word)
+                            Spacer()
+                            Button { settings.unlearn(word) } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                                .help("Forget this word")
+                        }
+                    }
+                }
             }
             Text(dictationUsage).font(.caption).foregroundStyle(.secondary)
         } header: {

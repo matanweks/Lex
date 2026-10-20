@@ -258,7 +258,11 @@ public enum TextTargets {
         var i = min(max(selection.location, 0), ns.length) - 1
         while i >= 0, SentenceSplitter.isSpace(ns.character(at: i)) { i -= 1 }
         if i < 0 {
-            // Caret at the very start: fall back to the first sentence.
+            // Caret at the very start: the first sentence, or the first paragraph.
+            if scope == .paragraph {
+                let p = SentenceSplitter.trimmed(ns.paragraphRange(for: NSRange(location: 0, length: 0)), in: ns)
+                return p.length > 0 ? p : nil
+            }
             return SentenceSplitter.split(text, caret: nil).first?.range
         }
         switch scope {

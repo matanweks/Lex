@@ -128,6 +128,9 @@ final class TargetTests: XCTestCase {
         let ns = text as NSString
         let r = TextTargets.refineRange(in: text, selection: NSRange(location: 5, length: 0), scope: .paragraph)
         XCTAssertEqual(r.map { ns.substring(with: $0) }, "Para one. Still one.")
+        // Caret at the very start still means the whole first paragraph.
+        let start = TextTargets.refineRange(in: text, selection: NSRange(location: 0, length: 0), scope: .paragraph)
+        XCTAssertEqual(start.map { ns.substring(with: $0) }, "Para one. Still one.")
     }
 
     func testWordBeingTyped() {
@@ -398,6 +401,10 @@ final class DictationTests: XCTestCase {
         XCTAssertEqual(DictationText.choose(cleaned: "So I think we should ship it on Wednesday.", raw: raw), "So I think we should ship it on Wednesday.")
         XCTAssertEqual(DictationText.choose(cleaned: String(repeating: "Here is a long answer instead. ", count: 10), raw: raw), raw)
         XCTAssertEqual(DictationText.choose(cleaned: nil, raw: raw), raw)
+        // A translation from Hebrew runs longer on the page; it still goes in.
+        let hebrew = "אני חושב שכדאי לשחרר את זה ביום רביעי"
+        let english = "I think we should ship it on Wednesday, once the team has had a look at it."
+        XCTAssertEqual(DictationText.choose(cleaned: english, raw: hebrew, translated: true), english)
     }
 
     func testSpacingBeforeInsertedText() {
@@ -428,5 +435,60 @@ final class DictationTests: XCTestCase {
         XCTAssertTrue(user.contains("<app>Slack</app>"))
         XCTAssertTrue(user.contains("<words>Pelles</words>"))
         XCTAssertTrue(user.hasSuffix("<transcript>hi</transcript>"))
+    }
+}
+
+final class AssistTests: XCTestCase {
+    func testTranslationGoesBetweenHebrewAndEnglish() {
+        XCTAssertEqual(Translation.target(for: "זה משפט בעברית שצריך לתרגם לאנגלית בבקשה."), "English")
+        XCTAssertEqual(Translation.target(for: "This is an ordinary English sentence to translate."), "Hebrew")
+        XCTAssertTrue(Translation.action(for: "Hello there, how are you today?").instruction.contains("Hebrew"))
+    }
+
+    let snippets = [
+        Snippet(name: "my calendar link", trigger: ";cal", text: "https://cal.example.com/me"),
+        Snippet(name: "signature", trigger: ";sig", text: "Best,\nMatan"),
+    ]
+
+    func testSpokenSnippets() {
+        XCTAssertEqual(Snippets.spokenMatch("My calendar link.", in: snippets)?.trigger, ";cal")
+        XCTAssertEqual(Snippets.spokenMatch("insert my calendar link", in: snippets)?.trigger, ";cal")
+        XCTAssertEqual(Snippets.spokenMatch("Paste signature!", in: snippets)?.trigger, ";sig")
+        XCTAssertNil(Snippets.spokenMatch("Here is my calendar link for Tuesday", in: snippets))
+    }
+
+    func testTypedSnippets() {
+        let text = "Book a slot here: ;cal "
+        let hit = Snippets.typedExpansion(in: text, caret: (text as NSString).length, snippets: snippets)
+        XCTAssertEqual(hit?.snippet.trigger, ";cal")
+        XCTAssertEqual(hit.map { (text as NSString).substring(with: $0.range) }, ";cal")
+        XCTAssertNil(Snippets.typedExpansion(in: "Book;cal ", caret: 9, snippets: snippets))    // must start a word
+        XCTAssertNil(Snippets.typedExpansion(in: "here ;cal", caret: 9, snippets: snippets))    // not finished yet
+        XCTAssertNotNil(Snippets.typedExpansion(in: ";sig\n", caret: 5, snippets: snippets))
+    }
+
+    func testAppStyles() {
+        XCTAssertEqual(WritingContext.of(bundleID: "com.tinyspeck.slackmacgap"), .chat)
+        XCTAssertEqual(WritingContext.of(bundleID: "com.apple.mail"), .email)
+        XCTAssertEqual(WritingContext.of(bundleID: "company.thebrowser.dia"), .other)
+    }
+
+    func testNameLikeWords() {
+        XCTAssertTrue(Learning.isNameLike("Pelles"))
+        XCTAssertTrue(Learning.isNameLike("AppFab"))
+        XCTAssertTrue(Learning.isNameLike("SOC"))
+        XCTAssertFalse(Learning.isNameLike("recieve"))
+        XCTAssertFalse(Learning.isNameLike("x"))
+        XCTAssertFalse(Learning.isNameLike("Pel1es"))
+        // Claude fixed "Recieve" but left "Pelles" alone: only the name is a candidate.
+        let edits = [AIEdit(original: "Recieve", replacement: "Receive", kind: .spelling, reason: "")]
+        XCTAssertEqual(Learning.acceptedNames(flagged: ["Pelles", "Recieve", "Pelles", "teh"], edits: edits), ["Pelles"])
+    }
+
+    func testPromptsCarryStyleVoiceAndTranslation() {
+        let d = Prompts.dictationUser(transcript: "hi", app: "Slack", before: "", words: [], style: "Casual", voice: "Short sentences", translateTo: "English")
+        XCTAssertTrue(d.contains("<style>Casual</style>") && d.contains("<voice>Short sentences</voice>") && d.contains("<translate>English</translate>"))
+        let r = Prompts.refineUser(text: "x", context: "", instruction: "y", style: "Casual")
+        XCTAssertTrue(r.hasPrefix("<style>Casual</style>"))
     }
 }

@@ -12,7 +12,7 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **Authoritative:** once Claude has reviewed a sentence, the spell checker's flags on names and jargon there are cleared.
 - **Refine:** press **⌃1** after you finish a sentence. A panel streams a rewrite from Claude Sonnet 5.5 (changeable in Settings) with the changes highlighted.
   - **↵** replaces the text in place.
-  - **⌘1–7** applies Improve, Fix only, Shorter, Clearer, Friendlier, Formal or Direct, stacked on the current version.
+  - **⌘1–7** applies Improve, Fix only, Shorter, Clearer, Friendlier, Formal or Direct, stacked on the current version. **⌘8** translates it between Hebrew and English.
   - Type an instruction ("less salesy") and press **↵** to apply it.
   - **Tab** switches scope: sentence, paragraph, or the whole field.
   - **⌘Z** undoes a step, **⌘C** copies, **⌘D** toggles the change view, **esc** closes.
@@ -35,12 +35,24 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
     - **English keyboard:** Apple's on-device recognizer. Free and private; a short sentence is typed about 0.5 s after release.
     - **Hebrew keyboard:** Google Chirp 3 (Hebrew and English, about $0.016 per minute, through the gcloud sign-in). Long dictation is cut at natural pauses and sent while you talk, so only the last piece is left when you let go.
   - **Tidy-up:** when a transcript has fillers or a spoken correction ("Tuesday, no wait, Wednesday"), or is long, Claude Haiku tidies it, keeping your words and language. If the result strays from the transcript, the raw transcript is used instead. **Words to know** in Settings are passed to both as spelling hints.
+  - **Live words:** with Apple's engine, the pill shows your words as you speak, and the text is ready about 0.1 s after you let go. Long Google dictation shows each piece as it comes back.
+  - **Voice editing:** select text, then hold the key and say what to change ("make this friendlier", "translate this to Hebrew"). The pill says "Say how to change the selection", and the refine panel opens with the result. It can be turned off in Settings.
+  - **Spoken snippets:** say a snippet's name ("insert my calendar link") and its text is typed.
+  - **Hebrew to English (optional):** Hebrew speech is typed in English, translated as part of the tidy-up.
+  - **Your style:** the tidy-up follows the style set for the app you're in (see Your style below).
   - **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
 
 - **Fix all:** press **⌃§** to apply every correction in the field at once.
   - **What's included:** spelling, grammar, punctuation and word choice. Clarity rewrites stay manual. The word you just typed counts too.
   - **Accuracy:** Lex first has Claude check any sentence it hasn't reviewed, waiting up to 2.5 s, so a name only the spell checker flagged isn't "fixed".
   - **How fixes go in:** fixes are applied one by one from the end of the text, so formatting such as @mentions survives. Each waits until the app has taken the previous one, and your clipboard is saved and restored once for the whole batch.
+
+- **Translate:** press **⌃2** to translate the selection, or the sentence you're in, between Hebrew and English. In a field you're writing in, **↵** replaces the text. Anywhere else (a web page, an email you're reading), **↵** copies the translation.
+- **Tone check:** press **⌃3** in a message you're writing. In two lines, Claude says how it will land and names the biggest risk, next to a better-toned version you can put in with **↵**.
+- **Summarize & reply:** select an email, thread or page and press **⌃4** for a summary. **⌘2–4** switch to key points with a to-do line, a drafted reply, or a translation. **↵** copies the result. With nothing selected in a text field, the whole field is used.
+- **Snippets:** saved text you insert by saying its name while dictating, or by typing its trigger and a space (`;cal `). Add them in Settings › Snippets.
+- **Learns your words:** a capitalised name or term that the spell checker flags but Claude accepts, in two different sentences, is learned. It stops being underlined, and dictation spells it right. **Learn** on a suggestion card does the same. Settings › Dictation lists learned words, and you can remove any of them.
+- **Your style:** Settings › Your style holds how text should read in chat apps, email and documents. Refine, tone fixes and the dictation tidy-up follow the style for the app you're in. Optionally, Lex keeps sentences you wrote that Claude found nothing to fix (on this Mac, at most 40). From those it builds a short description of your voice, used when refining and drafting replies. Building it sends those sentences to Claude once.
 
 Hover an underline to see the fix and apply it with a click. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
 
@@ -86,6 +98,8 @@ On first launch:
 - `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths.
 - `speak:<text>`, `speak-skip:<seconds>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 - `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
+- `live-test` feeds sample speech to the live Apple recognizer at talking pace and times the words. `pipeline-test` checks a spoken snippet name and a Hebrew-to-English dictation without a text field.
+- `translate`, `tone`, `summarize`, `voice-edit:<instruction>`, `select:<text>`, `panel-state`, `panel-accept` and `panel-close` drive the new panels. `dictate:plain|snippet|translate|command:<instruction>` runs sample speech through dictation as if the key were held; `snippet-test-add` and `snippet-test-remove` add and remove the snippet it uses.
 
 The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
 
@@ -96,9 +110,12 @@ The field commands only act on TextEdit, or on text that starts with `LEXTEST`; 
 | Refine, Sonnet 5.5 | ~0.7 s | ~1.2 s |
 | Refine, Opus 5.5 | ~1.0–2.4 s | ~1.8–2.6 s |
 
+Live dictation (Apple, measured on 2026-10-20): the first words appear about 1.1 s in, and the final text is ready about 0.1 s after the speech ends. A Hebrew dictation is translated to English in about 0.8 s.
+
 ## Layout
 
 - `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
+- `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
 - `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, key tap and HUD, hotkeys, settings.

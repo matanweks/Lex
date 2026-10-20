@@ -183,10 +183,12 @@ public enum DictationText {
 
     /// The cleaned text, unless the clean-up changed it so much it can't be trusted (an
     /// answer instead of a transcript, a dropped half): then the raw transcript.
-    public static func choose(cleaned: String?, raw: String) -> String {
+    /// A translation changes length more (Hebrew is short on the page), so it gets more room.
+    public static func choose(cleaned: String?, raw: String, translated: Bool = false) -> String {
         guard let cleaned = cleaned?.trimmingCharacters(in: .whitespacesAndNewlines), !cleaned.isEmpty else { return raw }
         let ratio = Double(cleaned.count) / Double(max(raw.count, 1))
-        return (0.4...1.6).contains(ratio) || raw.count < 25 ? cleaned : raw
+        let trusted = translated ? 0.3...3.0 : 0.4...1.6
+        return trusted.contains(ratio) || raw.count < 25 ? cleaned : raw
     }
 
     /// Whether a transcript is worth a Claude pass: anything long, or with fillers or a

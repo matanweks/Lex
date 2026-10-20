@@ -157,12 +157,34 @@ public final class ClaudeClient: @unchecked Sendable {
     }
 
     /// Streams a rewrite. `onText` gets the full text so far after every delta.
-    public func refine(text: String, context: String, instruction: String, model: ClaudeModel, onText: @escaping (String) -> Void) async throws -> String {
+    public func refine(text: String, context: String, instruction: String, model: ClaudeModel,
+                       style: String = "", voice: String = "", onText: @escaping (String) -> Void) async throws -> String {
+        try await streamText(model: model, maxTokens: 8000, system: Prompts.refineSystem,
+                             user: Prompts.refineUser(text: text, context: context, instruction: instruction, style: style, voice: voice), onText: onText)
+    }
+
+    /// Works on text the user selected but didn't write: summarize, key points, draft a reply.
+    public func assist(text: String, instruction: String, model: ClaudeModel, voice: String = "", onText: @escaping (String) -> Void) async throws -> String {
+        try await streamText(model: model, maxTokens: 8000, system: Prompts.assistSystem,
+                             user: Prompts.assistUser(text: text, instruction: instruction, voice: voice), onText: onText)
+    }
+
+    /// One or two lines on how a draft will land with its reader.
+    public func toneNote(_ text: String, model: ClaudeModel) async throws -> String {
+        try await streamText(model: model, maxTokens: 400, system: Prompts.toneSystem, user: "<message>\(text)</message>") { _ in }
+    }
+
+    /// A short description of the user's writing voice from samples of their writing.
+    public func voiceProfile(samples: [String], model: ClaudeModel) async throws -> String {
+        try await streamText(model: model, maxTokens: 600, system: Prompts.voiceProfileSystem, user: Prompts.voiceProfileUser(samples: samples)) { _ in }
+    }
+
+    private func streamText(model: ClaudeModel, maxTokens: Int, system: String, user: String, onText: @escaping (String) -> Void) async throws -> String {
         var body: [String: Any] = [
             "model": model.rawValue,
-            "max_tokens": 8000,
-            "system": Prompts.refineSystem,
-            "messages": [["role": "user", "content": Prompts.refineUser(text: text, context: context, instruction: instruction)]],
+            "max_tokens": maxTokens,
+            "system": system,
+            "messages": [["role": "user", "content": user]],
         ]
         var betas: [String] = []
         model.applyLowLatency(to: &body, betas: &betas)
@@ -176,12 +198,14 @@ public final class ClaudeClient: @unchecked Sendable {
 
     /// Tidies a dictation transcript (fillers, self-corrections, punctuation) without
     /// changing what was said.
-    public func cleanDictation(_ transcript: String, app: String, before: String, words: [String], model: ClaudeModel) async throws -> String {
+    public func cleanDictation(_ transcript: String, app: String, before: String, words: [String], model: ClaudeModel,
+                               style: String = "", voice: String = "", translateTo: String? = nil) async throws -> String {
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 4000,
             "system": [["type": "text", "text": Prompts.dictationSystem, "cache_control": ["type": "ephemeral"]]],
-            "messages": [["role": "user", "content": Prompts.dictationUser(transcript: transcript, app: app, before: before, words: words)]],
+            "messages": [["role": "user", "content": Prompts.dictationUser(transcript: transcript, app: app, before: before, words: words,
+                                                                           style: style, voice: voice, translateTo: translateTo)]],
         ]
         var betas: [String] = []
         model.applyLowLatency(to: &body, betas: &betas)

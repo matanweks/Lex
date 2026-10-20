@@ -34,6 +34,11 @@ final class Engine {
     private var lastTextChange = Date.distantPast
     private var idleTimer: Timer?
     private var ignored = Set<String>()
+    /// Names Claude accepted, with the sentences it accepted them in; learned after two.
+    private var nameVotes: [String: Set<String>] = [:]
+    /// Sentences you were typing (not text that was already in the field), for your voice profile.
+    private var authored = Set<String>()
+    private var lastExpansion: (location: Int, at: Date)?
     private var rectGeneration = 0
     private var lastOverlaySummary = ""
     private var started = false
@@ -106,6 +111,7 @@ final class Engine {
                 localText = snap.text
             }
             overlay.hideCard()
+            if !u.elementChanged { expandSnippet(in: snap) }
             runLocalCheck()
             scheduleAI()
         }
@@ -153,6 +159,10 @@ final class Engine {
             }
             let before = i > 0 ? sentences[i - 1].text : ""
             let distance = caret < s.range.location ? s.range.location - caret : max(0, caret - s.range.end)
+            if distance <= 2, idle < 5 {
+                if authored.count > 200 { authored.removeAll() }
+                authored.insert(s.text)
+            }
             candidates.append((s, before, distance))
         }
         if waitingForIdle {
@@ -199,6 +209,10 @@ final class Engine {
         aiCache[key] = edits
         lastError = nil
         Log.info("AI check \(key.split(separator: " ").count) words: \(ms) ms, \(edits.count) edits" + (firstEditMs.map { ", first at \($0) ms" } ?? ""))
+        noteNames(in: key, edits: edits)
+        if authored.remove(key) != nil, edits.isEmpty, key.split(whereSeparator: \.isWhitespace).count >= 6 {
+            settings.addVoiceSample(key)
+        }
         if snapshot?.text.contains(key) == true { recompose() }
         scheduleAI()
     }
@@ -319,8 +333,45 @@ final class Engine {
 
     func learn(_ issue: Issue) {
         local.learn(issue.original)
+        settings.learn(issue.original)
         localIssues.removeAll { $0.original == issue.original && $0.kind == .spelling }
         ignored.insert(IssueComposer.ignoreKey(issue))
         recompose()
+    }
+
+    // MARK: Learning and snippets
+
+    /// A name the spell checker keeps flagging but Claude reads as fine, in two different
+    /// sentences, is learned: it stops being underlined and dictation spells it right.
+    private func noteNames(in key: String, edits: [AIEdit]) {
+        guard let snap = snapshot, localText == snap.text else { return }
+        let sentence = (snap.text as NSString).range(of: key)
+        guard sentence.location != NSNotFound else { return }
+        let flagged = localIssues.filter { $0.kind == .spelling && NSIntersectionRange($0.range, sentence).length == $0.range.length }.map(\.original)
+        for word in Learning.acceptedNames(flagged: flagged, edits: edits) where !settings.learnedWords.contains(word) {
+            nameVotes[word, default: []].insert(key)
+            guard nameVotes[word]!.count >= 2 else { continue }
+            nameVotes[word] = nil
+            local.learn(word)
+            settings.learn(word)
+            localIssues.removeAll { $0.original == word && $0.kind == .spelling }
+            recompose()
+        }
+    }
+
+    /// A snippet trigger you just typed (";cal" then a space) becomes the snippet's text.
+    private func expandSnippet(in snap: FieldSnapshot) {
+        guard !settings.snippets.isEmpty, snap.selection.length == 0,
+              let (range, snippet) = Snippets.typedExpansion(in: snap.text, caret: snap.selection.location, snippets: settings.snippets) else { return }
+        if let last = lastExpansion, last.location == range.location, Date().timeIntervalSince(last.at) < 1 { return }
+        lastExpansion = (range.location, Date())
+        // Replace the trigger and the delimiter after it, so the caret lands after both.
+        let typed = NSRange(location: range.location, length: range.length + 1)
+        let ns = snap.text as NSString
+        let original = ns.substring(with: typed)
+        let delimiter = ns.substring(with: NSRange(location: typed.end - 1, length: 1))
+        tracker.replace(in: snap, range: typed, original: original, with: snippet.text + delimiter) { outcome in
+            Log.info("snippet expanded: \(outcome == .failed ? "failed" : "ok")")
+        }
     }
 }

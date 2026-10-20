@@ -399,8 +399,8 @@ final class ReaderHUD {
 enum TextGrabber {
     /// The selected text in the frontmost app. Falls back to copying the selection (web pages,
     /// PDFs, Mail), then to the paragraph at the caret when nothing is selected in a text field.
-    /// Never reads password fields.
-    static func grab(_ tracker: FocusTracker, completion: @escaping (String?) -> Void) {
+    /// Never reads password fields. `wholeField` takes the whole field instead of the paragraph.
+    static func grab(_ tracker: FocusTracker, wholeField: Bool = false, completion: @escaping (String?) -> Void) {
         tracker.selection { result in
             switch result {
             case .secure:
@@ -408,7 +408,7 @@ enum TextGrabber {
             case .selected(let text):
                 completion(text)
             case .caret(let text, let selection):
-                completion(TextTargets.refineRange(in: text, selection: selection, scope: .paragraph)
+                completion(TextTargets.refineRange(in: text, selection: selection, scope: wholeField ? .all : .paragraph)
                     .map { (text as NSString).substring(with: $0) })
             case .unknown:
                 copySelection { copied in completion(copied) }

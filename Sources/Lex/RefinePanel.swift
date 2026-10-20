@@ -18,6 +18,14 @@ final class RefineModel: ObservableObject {
     @Published var acceptWhenDone = false
     @Published var lastRunUnchanged = false
     @Published var modelLabel = ""
+    /// Edit: your own text, written back on Return. Assist: text you didn't write
+    /// (an email, a thread); results are copied.
+    enum Mode { case edit, assist }
+    @Published var mode: Mode = .edit
+    @Published var title = "Refine"
+    @Published var actions: [RefineAction] = RefineAction.all
+    /// A line above the result, e.g. how a message will land.
+    @Published var note: String?
 
     var latest: String { versions.last ?? original }
     var isStreaming: Bool { streamingText != nil }
@@ -67,7 +75,7 @@ struct RefineView: View {
             header
             result
             FlowLayout(spacing: 6) {
-                ForEach(Array(RefineAction.all.enumerated()), id: \.element.id) { index, action in
+                ForEach(Array(model.actions.enumerated()), id: \.element.id) { index, action in
                     chip(action, shortcut: index + 1)
                 }
             }
@@ -82,15 +90,17 @@ struct RefineView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "wand.and.stars").foregroundStyle(green)
-            Text("Refine").font(.headline)
-            Picker("", selection: Binding(get: { model.scope }, set: { onScope($0) })) {
-                ForEach(RefineScope.allCases, id: \.self) { Text($0.label).tag($0) }
+            Image(systemName: model.mode == .edit ? "wand.and.stars" : "text.magnifyingglass").foregroundStyle(green)
+            Text(model.title).font(.headline)
+            if model.mode == .edit {
+                Picker("", selection: Binding(get: { model.scope }, set: { onScope($0) })) {
+                    ForEach(RefineScope.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 230)
+                .help("Tab switches scope")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 230)
-            .help("Tab switches scope")
             Spacer()
             if model.isStreaming {
                 ProgressView().controlSize(.small)
@@ -105,6 +115,14 @@ struct RefineView: View {
     @ViewBuilder private var result: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
+                if let note = model.note {
+                    Label { Text(note).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true) } icon: {
+                        Image(systemName: "person.wave.2").foregroundStyle(green)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(green.opacity(0.10)))
+                }
                 if let error = model.error {
                     Text(error).foregroundStyle(.red).textSelection(.enabled)
                 }
@@ -134,7 +152,7 @@ struct RefineView: View {
             cursor.swiftUI.foregroundColor = green
             return s + cursor
         }
-        if model.showDiff, !model.versions.isEmpty { return Self.diff(model.original, model.latest, green: green) }
+        if model.mode == .edit, model.showDiff, !model.versions.isEmpty { return Self.diff(model.original, model.latest, green: green) }
         return AttributedString(model.latest)
     }
 
@@ -196,12 +214,12 @@ struct RefineView: View {
         HStack(spacing: 14) {
             hint("⌘C", "Copy")
             if !model.versions.isEmpty { hint("⌘Z", "Undo") }
-            hint("⌘D", model.showDiff ? "Hide changes" : "Show changes")
+            if model.mode == .edit { hint("⌘D", model.showDiff ? "Hide changes" : "Show changes") }
             hint("esc", "Close")
             Spacer()
             Text(model.modelLabel).font(.caption).foregroundStyle(.tertiary)
             Button(action: onAccept) {
-                Text(model.acceptWhenDone ? "Replacing…" : "Replace  ↵")
+                Text(model.mode == .assist ? "Copy  ↵" : model.acceptWhenDone ? "Replacing…" : "Replace  ↵")
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.horizontal, 12).padding(.vertical, 5)
                     .background(Capsule().fill(green))
@@ -228,7 +246,7 @@ struct RefineView: View {
 /// selection, paragraph, whole field), iterate with one-key actions, Enter to put it back.
 final class RefineController {
     private let panel = FloatingPanel(keyable: true, level: .floating)
-    private let model = RefineModel()
+    let model = RefineModel()
     private let client: ClaudeClient
     private let settings: AppSettings
     private let tracker: FocusTracker
@@ -274,17 +292,22 @@ final class RefineController {
         }
     }
 
-    func present(snapshot: FieldSnapshot, scope: RefineScope) {
+    func present(snapshot: FieldSnapshot, scope: RefineScope, start: RefineAction? = nil, title: String = "Refine") {
         if isOpen { close() }
         self.snapshot = snapshot
+        model.mode = .edit
+        model.title = title
         model.scope = scope
         model.instruction = ""
         model.showDiff = true
+        model.note = nil
         model.modelLabel = settings.refineModel.shortLabel
         guard loadTarget() else {
-            Toast.show("Nothing to refine here yet.")
+            Toast.show("Nothing to work on here yet.")
             return
         }
+        model.actions = RefineAction.all + [Translation.action(for: model.original)]
+        let first = start ?? .improve
         onOpen?()
         tracker.rect(for: range!, in: snapshot) { [weak self] rect in
             guard let self else { return }
@@ -293,12 +316,37 @@ final class RefineController {
             self.panel.makeKeyAndOrderFront(nil)
             if let field = Self.firstTextField(in: self.panel.contentView) { self.panel.makeFirstResponder(field) }
             self.installMonitors()
-            self.run(.improve)
+            self.run(first.id == "translate" ? Translation.action(for: self.model.original) : first)
             if self.autoAcceptNext {
                 self.autoAcceptNext = false
                 self.model.acceptWhenDone = true
             }
         }
+    }
+
+    /// Text you selected but didn't write (an email, a thread, a page): summarize, list the
+    /// key points, draft a reply or translate. Results are copied, never written over it.
+    func presentAssist(text: String, start: RefineAction, title: String = "Read") {
+        if isOpen { close() }
+        snapshot = nil
+        range = nil
+        context = ""
+        model.mode = .assist
+        model.title = title
+        model.original = text
+        model.versions = []
+        model.error = nil
+        model.note = nil
+        model.instruction = ""
+        model.lastRunUnchanged = false
+        model.actions = RefineAction.assist(for: text)
+        onOpen?()
+        anchor = nil
+        place(size: panel.contentView?.fittingSize ?? CGSize(width: 540, height: 240))
+        panel.makeKeyAndOrderFront(nil)
+        if let field = Self.firstTextField(in: panel.contentView) { panel.makeFirstResponder(field) }
+        installMonitors()
+        run(start)
     }
 
     /// Recomputes what's being refined for the current scope and starts over.
@@ -309,6 +357,7 @@ final class RefineController {
         model.original = (snap.text as NSString).substring(with: r)
         model.versions = []
         model.error = nil
+        model.note = nil
         model.lastRunUnchanged = false
         context = model.scope == .all ? "" : TextTargets.context(around: r, in: snap.text)
         return true
@@ -333,7 +382,10 @@ final class RefineController {
 
     func run(_ action: RefineAction) {
         task?.cancel()
-        let base = model.latest
+        // In assist mode the preset actions read the selected text itself; anything else
+        // (a typed instruction, a voice command) reworks the latest result.
+        let presetOnSource = model.mode == .assist && action.id != "custom"
+        let base = presetOnSource ? model.original : model.latest
         let started = Date()
         let id = UUID()
         runID = id
@@ -345,9 +397,24 @@ final class RefineController {
         let refineModel = settings.refineModel
         model.modelLabel = refineModel.shortLabel
         let context = self.context
+        let style = snapshot.map { settings.style(for: $0.bundleID) } ?? ""
+        let voice = settings.activeVoice
+        if action.id == "tone" {
+            model.note = "Reading how this will land…"
+            let toneModel = settings.liveModel ?? .haiku
+            Task { [weak self, client] in
+                let note = (try? await client.toneNote(base, model: toneModel)) ?? ""
+                await MainActor.run {
+                    guard let self, self.runID == id else { return }
+                    self.model.note = note.isEmpty ? nil : Self.clean(note)
+                }
+            }
+        } else if model.mode == .edit {
+            model.note = nil
+        }
         task = Task { [weak self, client] in
             do {
-                let result = try await client.refine(text: base, context: context, instruction: action.instruction, model: refineModel) { partial in
+                let onText: (String) -> Void = { partial in
                     DispatchQueue.main.async {
                         guard let self, self.runID == id else { return }
                         if self.model.firstTokenMs == nil, !partial.isEmpty {
@@ -356,8 +423,13 @@ final class RefineController {
                         self.model.streamingText = partial
                     }
                 }
+                let result = presetOnSource
+                    ? try await client.assist(text: base, instruction: action.instruction, model: refineModel, voice: voice, onText: onText)
+                    : try await client.refine(text: base, context: context, instruction: action.instruction, model: refineModel,
+                                              style: style, voice: voice, onText: onText)
                 await MainActor.run {
                     guard let self, self.runID == id else { return }
+                    if presetOnSource { self.model.versions = [] }  // each preset starts fresh
                     self.finish(Self.clean(result), base: base, ms: Int(Date().timeIntervalSince(started) * 1000))
                 }
             } catch {
@@ -426,6 +498,14 @@ final class RefineController {
     func accept() {
         if model.isStreaming {
             model.acceptWhenDone = true
+            return
+        }
+        if model.mode == .assist {
+            let text = model.latest
+            close()
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            Toast.show("Copied. Paste it where you need it.")
             return
         }
         guard let snap = snapshot, let range else { close(); return }
@@ -503,13 +583,14 @@ final class RefineController {
             if cmd || instructionEmpty { accept() } else { runInstruction() }
             return nil
         case 48:  // tab
-            cycleScope(); return nil
+            if model.mode == .edit { cycleScope() }
+            return nil
         default:
             break
         }
         guard cmd, let ch = e.charactersIgnoringModifiers?.lowercased() else { return e }
-        if let n = Int(ch), (1...RefineAction.all.count).contains(n) {
-            run(RefineAction.all[n - 1]); return nil
+        if let n = Int(ch), (1...model.actions.count).contains(n) {
+            run(model.actions[n - 1]); return nil
         }
         switch ch {
         case "z" where instructionEmpty: undo(); return nil

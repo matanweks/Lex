@@ -13,6 +13,9 @@ final class DebugHooks {
     private let reader: Reader
     private let speech: SpeechClient
     private let settings: AppSettings
+    /// The app's own actions ("translate", "tone", "summarize", "voice-edit") with an argument.
+    var appAction: ((String, String) -> Void)?
+    var dictation: DictationController?
 
     init(engine: Engine, refine: RefineController, client: ClaudeClient, reader: Reader, speech: SpeechClient, settings: AppSettings, openRefine: @escaping (RefineScope) -> Void) {
         self.engine = engine
@@ -127,12 +130,138 @@ final class DebugHooks {
         case "refine-accept" where textEditFrontmost:
             refine.autoAcceptNext = true
             openRefine(.sentence)
+        case "translate", "tone", "summarize":
+            guard textEditFrontmost else { Log.info("ignored: the tracked field isn't a test field"); return }
+            appAction?(command, "")
+        case let c where c.hasPrefix("voice-edit:") && textEditFrontmost:
+            appAction?("voice-edit", String(c.dropFirst("voice-edit:".count)))
+        case let c where c.hasPrefix("select:") && textEditFrontmost:
+            guard let snap = engine.snapshot else { return }
+            let ns = snap.text as NSString
+            let word = String(c.dropFirst("select:".count))
+            let r = word == "all" ? NSRange(location: 0, length: ns.length) : ns.range(of: word)
+            guard r.location != NSNotFound else { Log.info("select: not found"); return }
+            DispatchQueue.global().async { Log.info("select: \(TextReplacer.select(snap.element, r) ? "ok" : "failed") \(r)") }
+        case "panel-state":
+            let m = refine.model
+            guard m.original.hasPrefix("LEXTEST") || NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.TextEdit" else {
+                Log.info("ignored: the panel isn't on a test field"); return
+            }
+            Log.info("panel: open=\(refine.isOpen) title=\(m.title) mode=\(m.mode) running=\(m.running?.id ?? "-") versions=\(m.versions.count) error=\(m.error ?? "-")")
+            Log.info("panel actions: \(m.actions.map(\.label).joined(separator: ", "))")
+            Log.info("panel original: \(m.original.replacingOccurrences(of: "\n", with: "⏎"))")
+            Log.info("panel result: \(m.latest.replacingOccurrences(of: "\n", with: "⏎"))")
+            Log.info("panel note: \(m.note ?? "-")")
+        case "panel-accept" where NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.TextEdit":
+            refine.accept()
+        case "panel-close":
+            refine.close()
+        case "live-test":
+            if #available(macOS 26.0, *) { Task { await liveTest() } } else { Log.info("live-test: needs macOS 26") }
+        case let c where c.hasPrefix("dictate:") && textEditFrontmost:
+            Task { await dictateTest(String(c.dropFirst("dictate:".count))) }
+        case "pipeline-test":
+            Task { await pipelineTest() }
+        case "snippet-test-add":
+            settings.snippets.removeAll { $0.trigger == ";lxt" }
+            settings.snippets.append(Snippet(name: "lex test sign off", trigger: ";lxt", text: "Cheers, the Lex test"))
+        case "snippet-test-remove":
+            settings.snippets.removeAll { $0.trigger == ";lxt" }
+        case "learning-state":
+            Log.info("learning: \(settings.learnedWords.count) learned words, \(settings.voiceSamples.count) voice samples, collecting \(settings.learnVoice)")
         case "dump-field" where textEditFrontmost:
             // Test fields only (see textEditFrontmost), never the user's writing.
             Log.info("field text: \(engine.snapshot?.text.replacingOccurrences(of: "\n", with: "⏎") ?? "nil")")
             Log.info("issues: " + engine.issues.map { "\($0.source.rawValue)/\($0.kind.rawValue) '\($0.original)'→'\($0.replacements.first ?? "")'" }.joined(separator: ", "))
         default:
             Log.info("ignored: unknown command, or the tracked field isn't TextEdit (it's \(engine.snapshot?.bundleID ?? "none"); frontmost \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"))")
+        }
+    }
+
+    // MARK: New features (fixed sample speech only)
+
+    private func sample(_ text: String, language: String) async throws -> PCM16 {
+        let request = SpeechClient.Request(text: text, provider: .google, key: settings.speechKey(for: .google) ?? "",
+                                           googleLocale: GoogleTTS.locale(for: language), googleVoice: "Charon", elevenVoiceID: "", elevenModel: .flash)
+        let (mp3, _) = try await speech.synthesize(request)
+        return try PCMDecoder.decode(mp3)
+    }
+
+    /// Runs spoken samples through dictation as if the key had been held: plain, a spoken
+    /// snippet, Hebrew translated to English, or a voice edit of the selection.
+    private func dictateTest(_ kind: String) async {
+        let (text, language, engine): (String, String, DictationEngine)
+        switch kind {
+        case "snippet": (text, language, engine) = ("Insert my lex test sign off.", "en", .apple)
+        case "translate": (text, language, engine) = ("זה מבחן של לקס. אני רוצה לקבוע פגישה ביום רביעי בבוקר.", "he", .google)
+        case let k where k.hasPrefix("command:"): (text, language, engine) = (String(k.dropFirst("command:".count)), "en", .apple)
+        default: (text, language, engine) = ("This is a plain dictation test from Lex.", "en", .apple)
+        }
+        do {
+            let audio = try await sample(text, language: language)
+            await MainActor.run {
+                guard let dictation = self.dictation else { return }
+                let translate = self.settings.dictationTranslateHebrew
+                if kind == "translate" { self.settings.dictationTranslateHebrew = true }
+                Log.info("dictate-test \(kind): \(String(format: "%.1f", audio.seconds)) s via \(engine.rawValue)")
+                dictation.simulate(audio, engine: engine)
+                self.settings.dictationTranslateHebrew = translate
+            }
+        } catch {
+            Log.info("dictate-test error: \(error.localizedDescription)")
+        }
+    }
+
+    /// The dictation steps that don't need a text field: a spoken snippet name through Apple's
+    /// engine, and Hebrew speech through Google, translated to English in a chat style.
+    private func pipelineTest() async {
+        do {
+            let snippets = [Snippet(name: "lex test sign off", trigger: ";lxt", text: "Cheers, the Lex test")]
+            let said = try await AppleTranscription.transcribe(try await sample("Insert my lex test sign off.", language: "en"))
+            Log.info("pipeline-test snippet: heard '\(said)' -> \(Snippets.spokenMatch(said, in: snippets)?.text ?? "no match")")
+            let hebrew = try await sample("זה מבחן של לקס. אני רוצה לקבוע פגישה ביום רביעי בבוקר.", language: "he")
+            let raw = try await speech.transcribe(hebrew, languages: ["en-US", "iw-IL"], phrases: [])
+            let t0 = Date()
+            let english = try await client.cleanDictation(raw, app: "Slack", before: "", words: [], model: .haiku,
+                                                          style: WritingContext.defaultStyle[.chat] ?? "", voice: "", translateTo: "English")
+            Log.info("pipeline-test translate: heard '\(raw)' (\(SpeechText.language(of: raw) ?? "?")) -> '\(DictationText.choose(cleaned: english, raw: raw, translated: true))' in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+        } catch {
+            Log.info("pipeline-test error: \(error.localizedDescription)")
+        }
+    }
+
+    /// Feeds sample speech to the live Apple session at talking pace and times the words.
+    @available(macOS 26.0, *)
+    private func liveTest() async {
+        final class Box { var updates = 0; var firstMs: Int?; var last = "" }
+        do {
+            let audio = try await sample("Um, so I think we should ship the update to Pelles on Tuesday, no wait, Wednesday. Can you let the team know?", language: "en")
+            let box = Box()
+            let session = AppleLiveSession()
+            let t0 = Date()
+            session.onText = { text in
+                box.updates += 1
+                if box.firstMs == nil, !text.isEmpty { box.firstMs = Int(Date().timeIntervalSince(t0) * 1000) }
+                box.last = text
+            }
+            session.start()
+            let chunk = 1600  // 100 ms
+            var i = 0
+            while i < audio.samples.count {
+                session.feed(Array(audio.samples[i..<min(i + chunk, audio.samples.count)]))
+                i += chunk
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            let fed = Date()
+            let final = try await session.finish()
+            let tailMs = Int(Date().timeIntervalSince(fed) * 1000)
+            await MainActor.run {
+                Log.info("live-test: \(String(format: "%.1f", audio.seconds)) s audio, \(box.updates) live updates, first words at \(box.firstMs ?? -1) ms, final \(tailMs) ms after the last chunk")
+                Log.info("live-test last live: \(box.last)")
+                Log.info("live-test final: \(final)")
+            }
+        } catch {
+            Log.info("live-test error: \(error.localizedDescription)")
         }
     }
 

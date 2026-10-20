@@ -16,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKey: HotKey?
     private var speakHotKey: HotKey?
     private var fixAllHotKey: HotKey?
+    private var translateHotKey: HotKey?
+    private var toneHotKey: HotKey?
+    private var assistHotKey: HotKey?
     private var settingsWindow: NSWindow?
     private var trustTimer: Timer?
     private var bag = Set<AnyCancellable>()
@@ -32,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refine.onClose = { [weak self] in self?.engine.setPaused(false) }
         refine.onAccept = { [weak self] snap, range, original, text in self?.write(text, over: original, at: range, in: snap) }
         engine.overlay.onBadgeClick = { [weak self] in self?.openRefine(scope: .all) }
+        dictation.onCommand = { [weak self] instruction in self?.voiceEdit(instruction) }
         engine.onStatusChange = { [weak self] in self?.updateIcon() }
 
         settings.$hotkeyID.removeDuplicates().sink { [weak self] _ in
@@ -42,6 +46,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.store(in: &bag)
         settings.$fixAllHotkeyID.removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerFixAllHotKey() }
+        }.store(in: &bag)
+        settings.$translateHotkeyID.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerTranslateHotKey() }
+        }.store(in: &bag)
+        settings.$toneHotkeyID.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerToneHotKey() }
+        }.store(in: &bag)
+        settings.$assistHotkeyID.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerAssistHotKey() }
         }.store(in: &bag)
         settings.$dictationKeyID.removeDuplicates().dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.dictation.keyChanged() }
@@ -73,6 +86,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !settings.hasAPIKey { openSettings() }
         if settings.debugLog {
             debugHooks = DebugHooks(engine: engine, refine: refine, client: client, reader: reader, speech: speech, settings: settings) { [weak self] in self?.openRefine(scope: $0) }
+            debugHooks?.dictation = dictation
+            debugHooks?.appAction = { [weak self] name, arg in
+                switch name {
+                case "translate": self?.translate()
+                case "tone": self?.toneCheck()
+                case "summarize": self?.summarize()
+                case "voice-edit": self?.voiceEdit(arg)
+                default: break
+                }
+            }
             debugHooks?.install()
         }
     }
@@ -89,6 +112,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func fixAllFromMenu() { engine.fixAll() }
+
+    // MARK: Translate, tone, summarize
+
+    private func registerTranslateHotKey() {
+        translateHotKey = nil
+        let preset = settings.translateHotkey
+        translateHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 4) { [weak self] in self?.translate() }
+        if translateHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
+    }
+
+    private func registerToneHotKey() {
+        toneHotKey = nil
+        let preset = settings.toneHotkey
+        toneHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 5) { [weak self] in self?.toneCheck() }
+        if toneHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
+    }
+
+    private func registerAssistHotKey() {
+        assistHotKey = nil
+        let preset = settings.assistHotkey
+        assistHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 6) { [weak self] in self?.summarize() }
+        if assistHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
+    }
+
+    @objc private func translateFromMenu() { translate() }
+    @objc private func toneFromMenu() { toneCheck() }
+    @objc private func summarizeFromMenu() { summarize() }
+
+    /// Hebrew to English or English to Hebrew: the selection, or the sentence you're in.
+    private func translate() {
+        openPanel(title: "Translate", hotkey: settings.translateHotkey) { Translation.action(for: $0) }
+    }
+
+    /// How the message you're writing will land, with a better-toned version beside it.
+    private func toneCheck() {
+        openPanel(title: "Tone check", hotkey: settings.toneHotkey, scope: .all) { _ in .tone }
+    }
+
+    /// Someone else's text (an email, a thread, a page): summary, key points, a reply.
+    private func summarize() {
+        if refine.isOpen { refine.close(); return }
+        guard ready() else { return }
+        TextGrabber.grab(engine.tracker, wholeField: true) { [weak self] text in
+            guard let self else { return }
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                Toast.show("Select an email or message, then press \(self.settings.assistHotkey.label).")
+                return
+            }
+            self.refine.presentAssist(text: text, start: .summary, title: "Summarize & reply")
+        }
+    }
+
+    /// Dictation over a selection: what you said is the instruction for it.
+    private func voiceEdit(_ instruction: String) {
+        guard ready() else { return }
+        engine.tracker.readNow { [weak self] snap in
+            guard let self else { return }
+            if let snap, snap.selection.length > 0 {
+                self.refine.present(snapshot: snap, scope: .sentence, start: .custom(instruction), title: "Voice edit")
+                return
+            }
+            TextGrabber.grab(self.engine.tracker) { text in
+                guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    Toast.show("The selection was gone. Select the text again and say what to change.")
+                    return
+                }
+                self.refine.presentAssist(text: text, start: .custom(instruction), title: "Voice edit")
+            }
+        }
+    }
+
+    /// In a field Lex can edit, works on the selection (or `scope` without one) and writes the
+    /// result back. Anywhere else, works on the selected text and copies the result.
+    private func openPanel(title: String, hotkey: HotkeyPreset, scope: RefineScope = .sentence, start: @escaping (String) -> RefineAction) {
+        if refine.isOpen { refine.close(); return }
+        guard ready() else { return }
+        engine.tracker.readNow { [weak self] snap in
+            guard let self else { return }
+            if let snap, !snap.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let range = snap.selection.length > 0 ? snap.selection : NSRange(location: 0, length: (snap.text as NSString).length)
+                let text = (snap.text as NSString).substring(with: range)
+                self.refine.present(snapshot: snap, scope: snap.selection.length > 0 ? .sentence : scope, start: start(text), title: title)
+                return
+            }
+            TextGrabber.grab(self.engine.tracker) { text in
+                guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    Toast.show("Select some text, then press \(hotkey.label).")
+                    return
+                }
+                self.refine.presentAssist(text: text, start: start(text), title: title)
+            }
+        }
+    }
+
+    private func ready() -> Bool {
+        guard AX.isTrusted else { AX.promptForTrust(); return false }
+        guard settings.hasAPIKey else {
+            openSettings()
+            Toast.show("Add your Anthropic API key to use this.")
+            return false
+        }
+        return true
+    }
 
     // MARK: Read aloud
 
@@ -196,6 +322,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fixAllItem.keyEquivalent = settings.fixAllHotkey.menuKey
         fixAllItem.keyEquivalentModifierMask = settings.fixAllHotkey.menuModifiers
         menu.addItem(fixAllItem)
+        for (title, action, preset) in [("Translate", #selector(translateFromMenu), settings.translateHotkey),
+                                        ("Check Tone", #selector(toneFromMenu), settings.toneHotkey),
+                                        ("Summarize & Reply", #selector(summarizeFromMenu), settings.assistHotkey)] {
+            let i = item(title, action)
+            i.keyEquivalent = preset.menuKey
+            i.keyEquivalentModifierMask = preset.menuModifiers
+            menu.addItem(i)
+        }
         let speakItem = item(reader.isActive ? "Stop Reading" : "Read Selection Aloud", #selector(readAloudFromMenu))
         speakItem.keyEquivalent = settings.speakHotkey.menuKey
         speakItem.keyEquivalentModifierMask = settings.speakHotkey.menuModifiers
