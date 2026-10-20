@@ -17,6 +17,7 @@ final class DebugHooks {
     var appAction: ((String, String) -> Void)?
     var dictation: DictationController?
     var google: GoogleSignIn?
+    var clipboard: ClipboardController?
 
     init(engine: Engine, refine: RefineController, client: ClaudeClient, reader: Reader, speech: SpeechClient, settings: AppSettings, openRefine: @escaping (RefineScope) -> Void) {
         self.engine = engine
@@ -171,6 +172,14 @@ final class DebugHooks {
             settings.snippets.append(Snippet(name: "lex test sign off", trigger: ";lxt", text: "Cheers, the Lex test"))
         case "snippet-test-remove":
             settings.snippets.removeAll { $0.trigger == ";lxt" }
+        case "clip-state":
+            // Kinds and apps only, never what was copied.
+            let items = clipboard?.store.ordered ?? []
+            Log.info("clipboard: \(items.count) entries; newest: " + items.prefix(5).map { "\($0.kind.rawValue)/\($0.appName ?? "?")\($0.pinned ? "/pinned" : "")" }.joined(separator: ", "))
+        case "clip-open":
+            clipboard?.open()
+        case "clip-close":
+            clipboard?.close()
         case "status-item":
             appAction?("status-item", "")
         case "google-state":

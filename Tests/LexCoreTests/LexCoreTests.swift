@@ -597,3 +597,78 @@ final class GoogleSignInTests: XCTestCase {
         XCTAssertEqual(changes, [])
     }
 }
+
+final class ClipboardTests: XCTestCase {
+    private func text(_ s: String) -> ClipData { [[ClipTypes.plainText: Data(s.utf8)]] }
+
+    private func tempStore(retention: TimeInterval = 30 * 86400, maxItems: Int = 1000) -> (ClipboardStore, URL) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        return (ClipboardStore(directory: dir, retention: retention, maxItems: maxItems), dir)
+    }
+
+    func testPrivateCopiesAndPasswordManagersAreSkipped() {
+        XCTAssertFalse(ClipPolicy.shouldRecord(types: [ClipTypes.plainText, "org.nspasteboard.ConcealedType"], appID: "com.apple.Safari", ignoredApps: []))
+        XCTAssertFalse(ClipPolicy.shouldRecord(types: [ClipTypes.plainText, "org.nspasteboard.TransientType"], appID: nil, ignoredApps: []))
+        XCTAssertFalse(ClipPolicy.shouldRecord(types: [ClipTypes.plainText], appID: "com.1password.1password", ignoredApps: ClipPolicy.defaultIgnoredApps))
+        XCTAssertTrue(ClipPolicy.shouldRecord(types: [ClipTypes.plainText], appID: "com.apple.Safari", ignoredApps: ClipPolicy.defaultIgnoredApps))
+        XCTAssertFalse(ClipPolicy.keeps("dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu"))
+        XCTAssertTrue(ClipPolicy.keeps("public.rtf"))
+    }
+
+    func testKinds() {
+        XCTAssertEqual(ClipPolicy.describe(text("hello"))?.kind, .text)
+        XCTAssertEqual(ClipPolicy.describe(text("https://example.com/a?b=1"))?.kind, .link)
+        XCTAssertEqual(ClipPolicy.describe(text("see https://example.com"))?.kind, .text)
+        XCTAssertEqual(ClipPolicy.describe([[ClipTypes.png: Data([1, 2, 3])]])?.kind, .image)
+        let file = ClipPolicy.describe([[ClipTypes.fileURL: Data("file:///Users/me/Report.pdf".utf8)]])
+        XCTAssertEqual(file?.kind, .files)
+        XCTAssertEqual(file?.text, "/Users/me/Report.pdf")
+        XCTAssertNil(ClipPolicy.describe(text("   ")))
+    }
+
+    func testCopyingAgainMovesToTopInsteadOfDuplicating() {
+        let (store, dir) = tempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = store.add(text("one"), appID: "a", appName: "A", date: Date(timeIntervalSinceNow: -60))
+        store.add(text("two"), appID: "a", appName: "A")
+        store.add(text("one"), appID: "b", appName: "B")
+        XCTAssertEqual(store.items.map(\.text), ["one", "two"])
+        XCTAssertEqual(store.items.first?.id, first?.id)
+        XCTAssertEqual(store.items.first?.appName, "B")
+        // The full data comes back for pasting, rich types included.
+        let rich: ClipData = [[ClipTypes.plainText: Data("bold".utf8), "public.rtf": Data("{\\rtf1 \\b bold}".utf8)]]
+        let item = store.add(rich, appID: nil, appName: nil)!
+        XCTAssertEqual(store.data(for: item.id)?.first?["public.rtf"], rich[0]["public.rtf"])
+    }
+
+    func testRetentionPinsAndPersistence() {
+        let (store, dir) = tempStore(retention: 86400, maxItems: 2)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = store.add(text("old"), appID: nil, appName: nil, date: Date(timeIntervalSinceNow: -2 * 86400))!
+        store.togglePin(old.id)
+        store.add(text("a"), appID: nil, appName: nil)
+        store.add(text("b"), appID: nil, appName: nil)
+        store.add(text("c"), appID: nil, appName: nil)
+        store.prune()
+        // Pinned survives age and the cap; only the newest two unpinned stay.
+        XCTAssertEqual(store.ordered.map(\.text), ["old", "c", "b"])
+
+        let reopened = ClipboardStore(directory: dir, retention: 86400, maxItems: 2)
+        reopened.load()
+        XCTAssertEqual(reopened.ordered.map(\.text), ["old", "c", "b"])
+        XCTAssertNotNil(reopened.data(for: old.id))
+
+        reopened.clear()
+        XCTAssertEqual(reopened.items.map(\.text), ["old"])
+    }
+
+    func testSearch() {
+        let (store, dir) = tempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        store.add(text("Meeting on Wednesday at the café"), appID: nil, appName: "Slack")
+        store.add(text("Invoice 2026-10"), appID: nil, appName: "Mail")
+        XCTAssertEqual(ClipboardStore.search(store.items, "cafe wednesday").map(\.appName), ["Slack"])
+        XCTAssertEqual(ClipboardStore.search(store.items, "mail").map(\.text), ["Invoice 2026-10"])
+        XCTAssertEqual(ClipboardStore.search(store.items, "").count, 2)
+    }
+}

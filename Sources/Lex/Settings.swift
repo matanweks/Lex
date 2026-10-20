@@ -5,6 +5,7 @@ import LexCore
 import ServiceManagement
 import Security
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum Keychain {
     static let service = "dev.lex.app"
@@ -94,6 +95,14 @@ struct HotkeyPreset: Identifiable, Equatable {
         HotkeyPreset(id: "ctrl-opt-j", label: "⌃⌥J", keyCode: UInt32(kVK_ANSI_J), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "j", menuModifiers: [.control, .option]),
     ]
 
+    /// For the clipboard history. ⇧⌘V is "Paste and Match Style" in many apps, so it's not the default.
+    static let clipboard: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-cmd-v", label: "⌃⌘V", keyCode: UInt32(kVK_ANSI_V), carbonModifiers: UInt32(controlKey | cmdKey), menuKey: "v", menuModifiers: [.control, .command]),
+        HotkeyPreset(id: "ctrl-5", label: "⌃5", keyCode: UInt32(kVK_ANSI_5), carbonModifiers: UInt32(controlKey), menuKey: "5", menuModifiers: [.control]),
+        HotkeyPreset(id: "opt-cmd-v", label: "⌥⌘V", keyCode: UInt32(kVK_ANSI_V), carbonModifiers: UInt32(optionKey | cmdKey), menuKey: "v", menuModifiers: [.option, .command]),
+        HotkeyPreset(id: "shift-cmd-v", label: "⇧⌘V", keyCode: UInt32(kVK_ANSI_V), carbonModifiers: UInt32(shiftKey | cmdKey), menuKey: "v", menuModifiers: [.shift, .command]),
+    ]
+
     static func find(_ id: String, in list: [HotkeyPreset]) -> HotkeyPreset { list.first { $0.id == id } ?? list[0] }
 }
 
@@ -145,6 +154,11 @@ final class AppSettings: ObservableObject {
     @Published var dictationLanguagesID: String { didSet { defaults.set(dictationLanguagesID, forKey: "dictationLanguages") } }
     @Published var dictationPolish: Bool { didSet { defaults.set(dictationPolish, forKey: "dictationPolish") } }
     @Published var dictationVoiceEdit: Bool { didSet { defaults.set(dictationVoiceEdit, forKey: "dictationVoiceEdit") } }
+    // Clipboard history
+    @Published var clipboardEnabled: Bool { didSet { defaults.set(clipboardEnabled, forKey: "clipboardEnabled") } }
+    @Published var clipboardHotkeyID: String { didSet { defaults.set(clipboardHotkeyID, forKey: "clipboardHotkey") } }
+    @Published var clipboardDays: Int { didSet { defaults.set(clipboardDays, forKey: "clipboardDays") } }
+    @Published var clipboardIgnoredApps: [String] { didSet { defaults.set(clipboardIgnoredApps, forKey: "clipboardIgnoredApps") } }
     /// The setup guide was finished with everything Lex needs in place.
     @Published var onboarded: Bool { didSet { defaults.set(onboarded, forKey: "onboarded") } }
     @Published var dictationWords: String { didSet { defaults.set(dictationWords, forKey: "dictationWords") } }
@@ -179,6 +193,10 @@ final class AppSettings: ObservableObject {
             "dictationPolish": true,
             "dictationVoiceEdit": true,
             "onboarded": false,
+            "clipboardEnabled": true,
+            "clipboardHotkey": HotkeyPreset.clipboard[0].id,
+            "clipboardDays": 30,
+            "clipboardIgnoredApps": ClipPolicy.defaultIgnoredApps,
             "dictationWords": "",
         ])
         enabled = defaults.bool(forKey: "enabled")
@@ -211,6 +229,10 @@ final class AppSettings: ObservableObject {
         dictationPolish = defaults.bool(forKey: "dictationPolish")
         dictationVoiceEdit = defaults.bool(forKey: "dictationVoiceEdit")
         onboarded = defaults.bool(forKey: "onboarded")
+        clipboardEnabled = defaults.bool(forKey: "clipboardEnabled")
+        clipboardHotkeyID = defaults.string(forKey: "clipboardHotkey") ?? HotkeyPreset.clipboard[0].id
+        clipboardDays = defaults.integer(forKey: "clipboardDays")
+        clipboardIgnoredApps = defaults.stringArray(forKey: "clipboardIgnoredApps") ?? ClipPolicy.defaultIgnoredApps
         dictationWords = defaults.string(forKey: "dictationWords") ?? ""
         hasAPIKey = !(apiKey() ?? "").isEmpty
         hasGoogleKey = !(speechKey(for: .google) ?? "").isEmpty
@@ -245,6 +267,7 @@ final class AppSettings: ObservableObject {
     var translateHotkey: HotkeyPreset { HotkeyPreset.find(translateHotkeyID, in: HotkeyPreset.translate) }
     var toneHotkey: HotkeyPreset { HotkeyPreset.find(toneHotkeyID, in: HotkeyPreset.tone) }
     var assistHotkey: HotkeyPreset { HotkeyPreset.find(assistHotkeyID, in: HotkeyPreset.assist) }
+    var clipboardHotkey: HotkeyPreset { HotkeyPreset.find(clipboardHotkeyID, in: HotkeyPreset.clipboard) }
 
     /// How text should read in this app: your edit, or the default for its kind of app.
     func style(for bundleID: String) -> String {
@@ -394,6 +417,8 @@ struct SettingsView: View {
     let reader: Reader
     @ObservedObject var google: GoogleSignIn
     var onOpenGuide: () -> Void = {}
+    var onClearClipboard: () -> Void = {}
+    var clipboardCount: () -> Int = { 0 }
     @State private var googleKeyDraft = ""
     @State private var elevenKeyDraft = ""
     @State private var elevenVoices: [VoiceOption] = []
@@ -495,6 +520,9 @@ struct SettingsView: View {
                 Picker("Tone check", selection: $settings.toneHotkeyID) {
                     ForEach(HotkeyPreset.tone) { Text($0.label).tag($0.id) }
                 }
+                Picker("Clipboard history", selection: $settings.clipboardHotkeyID) {
+                    ForEach(HotkeyPreset.clipboard) { Text($0.label).tag($0.id) }
+                }
                 Toggle("Show the issue badge next to the text field", isOn: $settings.showBadge)
                 Toggle("Open Lex at login", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 }))
             }
@@ -502,6 +530,8 @@ struct SettingsView: View {
             styleSection
 
             snippetsSection
+
+            clipboardSection
 
             readAloudSection
 
@@ -609,6 +639,63 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: Clipboard history
+
+    @State private var clipboardCleared = false
+
+    @ViewBuilder private var clipboardSection: some View {
+        Section {
+            Toggle("Keep a history of what I copy", isOn: $settings.clipboardEnabled)
+            Picker("Keep entries for", selection: $settings.clipboardDays) {
+                Text("1 day").tag(1)
+                Text("7 days").tag(7)
+                Text("30 days").tag(30)
+                Text("3 months").tag(90)
+            }
+            .disabled(!settings.clipboardEnabled)
+            HStack {
+                Text(clipboardCleared ? "Cleared (pinned entries stay)" : "\(clipboardCount()) entries on this Mac")
+                    .font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Button("Clear History") {
+                    onClearClipboard()
+                    clipboardCleared = true
+                }
+            }
+            DisclosureGroup("Never keep copies from (\(settings.clipboardIgnoredApps.count))") {
+                ForEach(settings.clipboardIgnoredApps, id: \.self) { id in
+                    HStack {
+                        Text(Self.appName(id)).lineLimit(1)
+                        Text(id).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                        Spacer()
+                        Button {
+                            settings.clipboardIgnoredApps.removeAll { $0 == id }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                Button("Add App…") { pickIgnoredApp() }
+            }
+        } header: {
+            Text("Clipboard history")
+        } footer: {
+            Text("Press \(settings.clipboardHotkey.label) to search what you copied and paste it again, with its formatting. History stays on this Mac. Passwords and other copies apps mark as private are never kept, and neither is anything copied in the apps above.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func pickIgnoredApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Never Keep Copies"
+        guard panel.runModal() == .OK, let url = panel.url, let id = Bundle(url: url)?.bundleIdentifier,
+              !settings.clipboardIgnoredApps.contains(id) else { return }
+        settings.clipboardIgnoredApps.append(id)
     }
 
     // MARK: Snippets

@@ -30,6 +30,7 @@ To uninstall, quit Lex and delete `~/Applications/Lex.app`. To remove its settin
 | **⌃4** | **Tone check**: how your message will land, plus a better-toned version | The message you're writing, or the selection |
 | **⌃§** | **Fix all**: applies every correction in the field at once | The field you're typing in |
 | **⌥§** | **Read aloud**; press again to stop | The selection, or the paragraph at the cursor |
+| **⌃⌘V** | **Clipboard history**: search what you copied, paste it again | Any app |
 | Hold **Right ⌥** | **Dictate**: talk, let go, and the text is typed at your cursor | Any text field |
 | Double-tap **Right ⌥** | **Hands-free dictation**; tap once more to finish | Any text field |
 | Select text, hold **Right ⌥** | **Voice edit**: say what to change ("make this friendlier") | The selection |
@@ -116,6 +117,14 @@ Like Wispr Flow: hold the key, talk, let go, and the text is typed at your curso
 - **Copy last dictation:** in the menu-bar menu, in case it landed in the wrong place.
 - **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
 
+### Clipboard history (⌃⌘V)
+
+Lex keeps what you copy (text, links, images and files) and ⌃⌘V opens a panel to find it again. Type to search, **↑↓** to move, **↵** to paste where you were (with its formatting) or **⌘↵** to paste plain text. **⌘1–9** pastes one of the first nine. **⌘C** copies without pasting, **⌘P** pins an entry so it never expires, and **⌘⌫** deletes it. The panel shows each entry in full, with the app it came from.
+
+- **Private copies are never kept:** passwords and one-time codes that apps mark as private (1Password, Bitwarden and others), anything copied in a password manager, and Lex's own use of the clipboard.
+- **Stays on this Mac:** in `~/Library/Application Support/dev.lex.app/Clipboard`, for 30 days by default (1 day to 3 months in Settings), up to 1,000 entries. Copies over 20 MB are skipped. Pinned entries stay until you unpin them.
+- **No duplicates:** copying something again moves it to the top.
+
 ### Snippets
 
 Saved text you insert by saying its name while dictating, or by typing its trigger and a space (`;cal `). A trigger only fires at the start of a word, and the space is kept after the inserted text. Add, edit and delete them in Settings › Snippets.
@@ -168,6 +177,7 @@ The setup guide opens on first launch. In detail:
 | Behavior | All panel shortcuts, the issue badge, open at login |
 | Your style | Per-app styles, your voice description, collecting and building it |
 | Snippets | Name, trigger and text for each snippet |
+| Clipboard history | On or off, how long entries are kept, clear history, apps whose copies are never kept |
 | Read aloud | Voice service, voice, speed, shortcut, this month's usage |
 | Dictation | Permissions, talk key, engine, languages, tidy-up, voice editing, Hebrew to English, words to know, learned words, this month's usage |
 | Apps Lex stays out of | Apps where Lex is off; add one from the menu bar while you're in it |
@@ -176,7 +186,7 @@ The setup guide opens on first launch. In detail:
 
 - **What goes where:** text you type in checked apps, and text you send to a panel, goes to the Anthropic API with your key. Text you read aloud goes to the voice service you pick. Dictation audio stays on your Mac with Apple's engine and goes to Google with Google's. Building your voice sends the collected sentences to Claude once.
 - **Never read:** password fields. Terminals, code editors and password managers are off by default; turn Lex off for any other app from the menu-bar icon.
-- **Stored on your Mac:** API keys in the Keychain; settings, snippets, learned words and voice sentences in Lex's preferences; read-aloud audio in the cache.
+- **Stored on your Mac:** API keys in the Keychain; settings, snippets, learned words and voice sentences in Lex's preferences; read-aloud audio in the cache; clipboard history in Application Support (never sent anywhere).
 - **Costs:** Claude usage is billed to your API key. Google voices are free for the first 1M characters a month, then $0.03 per 1,000; Google dictation is about $0.016 per minute; Apple dictation and the macOS voice are free. Settings shows this month's voice characters and dictation minutes.
 - **Debug log** (off by default; timings and counts only, never your text): `defaults write dev.lex.app debugLog -bool true`, then see `~/Library/Logs/Lex.log`.
 
@@ -200,6 +210,7 @@ The setup guide opens on first launch. In detail:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths; `caret:<n>` puts the cursor at a position, and `dump-field` logs where it is.
 - `translate`, `tone`, `summarize`, `voice-edit:<instruction>`, `select:<text>`, `panel-state`, `panel-accept` and `panel-close` drive the panels.
+- `clip-state` logs the clipboard history's size and the kinds and apps of the newest entries (never their content); `clip-open` and `clip-close` show and hide the panel.
 - `google-state` logs the Google sign-in state and where gcloud is; `google-preview:on|off` shows the expired-sign-in look without touching the sign-in; `status-item` logs where the menu-bar icon is.
 - `speak:<text>`, `speak-skip:<seconds>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 - `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
@@ -224,8 +235,9 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
 - `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
+- `Sources/LexCore/Clipboard.swift`: the clipboard history store (index plus one file per entry), what's never kept, and search.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, and the brand colours and menu-bar mark.
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, the clipboard history panel, and the brand colours and menu-bar mark.
 - `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
 - `Resources/`: `Info.plist` and `AppIcon.icns`.
 - `TestPages/`: browser test fields for the debug commands.

@@ -158,6 +158,7 @@ struct OnboardingView: View {
                 shortcut(settings.toneHotkey.label, "Check the tone of your message")
                 shortcut(settings.fixAllHotkey.label, "Fix every mistake in the field")
                 shortcut(settings.speakHotkey.label, "Read the selection aloud")
+                shortcut(settings.clipboardHotkey.label, "Search what you copied and paste it again")
                 shortcut("Hold \(settings.dictationKey.short)", "Dictate; over a selection, say how to change it")
             }
         }

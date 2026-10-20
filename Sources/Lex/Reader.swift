@@ -421,6 +421,8 @@ enum TextGrabber {
         let pb = NSPasteboard.general
         let saved = Paster.snapshot()
         let before = pb.changeCount
+        // Lex's own copy, put back right after: keep it out of the clipboard history.
+        ClipboardController.ignoreChanges(for: 1.5)
         Keys.press(0x08, flags: .maskCommand)  // ⌘C
         var waited = 0.0
         func poll() {

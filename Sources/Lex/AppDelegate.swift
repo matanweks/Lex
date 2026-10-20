@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var reader = Reader(settings: settings, client: speech)
     private lazy var dictation = DictationController(settings: settings, claude: client, speech: speech, tracker: engine.tracker)
     private lazy var google = GoogleSignIn(speech: speech)
+    private lazy var clipboard = ClipboardController(settings: settings)
     private var statusItem: NSStatusItem!
     /// A small orange dot on the icon while the Google sign-in needs renewing.
     private let warningDot: NSView = {
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var translateHotKey: HotKey?
     private var toneHotKey: HotKey?
     private var assistHotKey: HotKey?
+    private var clipboardHotKey: HotKey?
     private var settingsWindow: NSWindow?
     private var setupWindow: NSWindow?
     private var trustTimer: Timer?
@@ -80,6 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$assistHotkeyID.removeDuplicates().sink { [weak self] _ in
             DispatchQueue.main.async { self?.registerAssistHotKey() }
         }.store(in: &bag)
+        settings.$clipboardHotkeyID.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.registerClipboardHotKey() }
+        }.store(in: &bag)
+        clipboard.start()
         settings.$dictationKeyID.removeDuplicates().dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.dictation.keyChanged() }
         }.store(in: &bag)
@@ -93,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
                 self?.engine.settingsChanged()
+                self?.clipboard.settingsChanged()
                 self?.updateIcon()
             }
         }.store(in: &bag)
@@ -118,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             debugHooks = DebugHooks(engine: engine, refine: refine, client: client, reader: reader, speech: speech, settings: settings) { [weak self] in self?.openRefine(scope: $0) }
             debugHooks?.dictation = dictation
             debugHooks?.google = google
+            debugHooks?.clipboard = clipboard
             debugHooks?.appAction = { [weak self] name, arg in
                 switch name {
                 case "translate": self?.translate()
@@ -170,6 +178,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         assistHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 6) { [weak self] in self?.summarize() }
         if assistHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
     }
+
+    private func registerClipboardHotKey() {
+        clipboardHotKey = nil
+        let preset = settings.clipboardHotkey
+        clipboardHotKey = HotKey(keyCode: preset.keyCode, modifiers: preset.carbonModifiers, id: 7) { [weak self] in
+            self?.clipboard.toggle()
+        }
+        if clipboardHotKey == nil { Log.info("couldn't register \(preset.label); another app may own it") }
+    }
+
+    @objc private func clipboardFromMenu() { clipboard.toggle() }
 
     @objc private func translateFromMenu() { translate() }
     @objc private func toneFromMenu() { toneCheck() }
@@ -384,6 +403,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             i.keyEquivalentModifierMask = preset.menuModifiers
             menu.addItem(i)
         }
+        if settings.clipboardEnabled {
+            let clip = item("Clipboard History", #selector(clipboardFromMenu))
+            clip.keyEquivalent = settings.clipboardHotkey.menuKey
+            clip.keyEquivalentModifierMask = settings.clipboardHotkey.menuModifiers
+            menu.addItem(clip)
+        }
         let speakItem = item(reader.isActive ? "Stop Reading" : "Read Selection Aloud", #selector(readAloudFromMenu))
         speakItem.keyEquivalent = settings.speakHotkey.menuKey
         speakItem.keyEquivalentModifierMask = settings.speakHotkey.menuModifiers
@@ -484,7 +509,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func openSettings() {
         if settingsWindow == nil {
             let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client, speech: speech, reader: reader, google: google,
-                                                                                               onOpenGuide: { [weak self] in self?.openSetupGuide() })))
+                                                                                               onOpenGuide: { [weak self] in self?.openSetupGuide() },
+                                                                                               onClearClipboard: { [weak self] in self?.clipboard.clear() },
+                                                                                               clipboardCount: { [weak self] in self?.clipboard.store.items.count ?? 0 })))
             window.title = "Lex Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
