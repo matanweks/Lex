@@ -49,6 +49,7 @@ struct HotkeyPreset: Identifiable, Equatable {
     let menuModifiers: NSEvent.ModifierFlags
 
     static let all: [HotkeyPreset] = [
+        HotkeyPreset(id: "ctrl-1", label: "⌃1", keyCode: UInt32(kVK_ANSI_1), carbonModifiers: UInt32(controlKey), menuKey: "1", menuModifiers: [.control]),
         HotkeyPreset(id: "opt-1", label: "⌥1", keyCode: UInt32(kVK_ANSI_1), carbonModifiers: UInt32(optionKey), menuKey: "1", menuModifiers: [.option]),
         HotkeyPreset(id: "ctrl-opt-r", label: "⌃⌥R", keyCode: UInt32(kVK_ANSI_R), carbonModifiers: UInt32(controlKey | optionKey), menuKey: "r", menuModifiers: [.control, .option]),
         HotkeyPreset(id: "opt-shift-space", label: "⌥⇧Space", keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(optionKey | shiftKey), menuKey: " ", menuModifiers: [.option, .shift]),
