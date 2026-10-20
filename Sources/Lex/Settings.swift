@@ -388,6 +388,7 @@ struct SettingsView: View {
     let client: ClaudeClient
     let speech: SpeechClient
     let reader: Reader
+    @ObservedObject var google: GoogleSignIn
     @State private var googleKeyDraft = ""
     @State private var elevenKeyDraft = ""
     @State private var elevenVoices: [VoiceOption] = []
@@ -675,6 +676,13 @@ struct SettingsView: View {
                 if !googleSignedIn {
                     Text("Needs the gcloud sign-in from Read aloud above, with Speech-to-Text enabled: gcloud services enable speech.googleapis.com --project PROJECT_ID")
                         .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                } else if google.expired {
+                    HStack {
+                        Text("Your Google sign-in expired, so Google dictation doesn't work until you sign in again.")
+                            .font(.caption).foregroundStyle(.orange)
+                        Spacer()
+                        googleSignInButton
+                    }
                 }
             }
             Toggle("Tidy up with Claude: drop \"um\"s, apply \"no wait…\" corrections, fix punctuation", isOn: $settings.dictationPolish)
@@ -728,11 +736,19 @@ struct SettingsView: View {
             switch settings.speechProvider {
             case .google:
                 HStack {
-                    statusIcon(googleSignedIn || settings.hasGoogleKey)
+                    statusIcon(settings.hasGoogleKey || googleSignedIn && !google.expired)
                     Text(googleStatus)
                     Spacer()
-                    Button(checkingVoice ? "Checking…" : "Check connection") { checkGoogle() }
-                        .disabled(checkingVoice || !(googleSignedIn || settings.hasGoogleKey))
+                    if google.expired && !settings.hasGoogleKey {
+                        googleSignInButton
+                    } else {
+                        Button(checkingVoice ? "Checking…" : "Check connection") { checkGoogle() }
+                            .disabled(checkingVoice || !(googleSignedIn || settings.hasGoogleKey))
+                    }
+                }
+                if google.expired && !settings.hasGoogleKey {
+                    Text("Your organisation ends Google sign-ins after a while. Until you sign in again, reading aloud uses the macOS voice and Google dictation doesn't work. Sign in again opens Google in your browser.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if let voiceCheck {
                     Text(voiceCheck).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -799,6 +815,11 @@ struct SettingsView: View {
         }
     }
 
+    private var googleSignInButton: some View {
+        Button(google.signingIn ? "Waiting for the browser…" : "Sign in again") { google.signIn() }
+            .disabled(google.signingIn)
+    }
+
     static let gcloudSteps = """
     brew install --cask gcloud-cli
     gcloud auth application-default login
@@ -809,6 +830,7 @@ struct SettingsView: View {
     private var googleStatus: String {
         if settings.hasGoogleKey { return "Using your Google API key" }
         guard googleSignedIn else { return "Not connected to Google yet" }
+        if google.expired { return "Your Google sign-in expired" }
         return googleProject.map { "Signed in with gcloud, billing project \($0)" } ?? "Signed in with gcloud, but no quota project set"
     }
 

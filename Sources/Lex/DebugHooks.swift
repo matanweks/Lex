@@ -16,6 +16,7 @@ final class DebugHooks {
     /// The app's own actions ("translate", "tone", "summarize", "voice-edit") with an argument.
     var appAction: ((String, String) -> Void)?
     var dictation: DictationController?
+    var google: GoogleSignIn?
 
     init(engine: Engine, refine: RefineController, client: ClaudeClient, reader: Reader, speech: SpeechClient, settings: AppSettings, openRefine: @escaping (RefineScope) -> Void) {
         self.engine = engine
@@ -167,6 +168,14 @@ final class DebugHooks {
             settings.snippets.append(Snippet(name: "lex test sign off", trigger: ";lxt", text: "Cheers, the Lex test"))
         case "snippet-test-remove":
             settings.snippets.removeAll { $0.trigger == ";lxt" }
+        case "status-item":
+            appAction?("status-item", "")
+        case "google-state":
+            Log.info("google: signed in \(speech.googleSignedIn), expired \(google?.expired ?? false), signing in \(google?.signingIn ?? false), gcloud \(GoogleSignIn.gcloudPath()?.path ?? "not found")")
+        case "google-preview:on":
+            google?.preview(true)
+        case "google-preview:off":
+            google?.preview(false)
         case "learning-state":
             Log.info("learning: \(settings.learnedWords.count) learned words, \(settings.voiceSamples.count) voice samples, collecting \(settings.learnVoice)")
         case "dump-field" where textEditFrontmost:

@@ -12,7 +12,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         .appendingPathComponent("dev.lex.app/speech"))
     private lazy var reader = Reader(settings: settings, client: speech)
     private lazy var dictation = DictationController(settings: settings, claude: client, speech: speech, tracker: engine.tracker)
+    private lazy var google = GoogleSignIn(speech: speech)
     private var statusItem: NSStatusItem!
+    /// A small orange dot on the icon while the Google sign-in needs renewing.
+    private let warningDot: NSView = {
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
+        dot.layer?.cornerRadius = 3.5
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.isHidden = true
+        return dot
+    }()
     private var hotKey: HotKey?
     private var speakHotKey: HotKey?
     private var fixAllHotKey: HotKey?
@@ -26,6 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Keeps the spot you ⌘-drag the icon to across restarts, instead of the far left, where
+        // a crowded menu bar can hide it behind the notch.
+        statusItem.autosaveName = "Lex"
+        if let button = statusItem.button {
+            button.addSubview(warningDot)
+            NSLayoutConstraint.activate([
+                warningDot.widthAnchor.constraint(equalToConstant: 7),
+                warningDot.heightAnchor.constraint(equalToConstant: 7),
+                warningDot.centerXAnchor.constraint(equalTo: button.centerXAnchor, constant: 8),
+                warningDot.centerYAnchor.constraint(equalTo: button.centerYAnchor, constant: -6),
+            ])
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -60,8 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async { self?.dictation.keyChanged() }
         }.store(in: &bag)
         DispatchQueue.global(qos: .utility).async { [speech] in speech.trimCache() }
-        // Fetch the Google sign-in token now, so the first read doesn't wait for it.
-        if speech.googleSignedIn { Task { [speech] in _ = try? await speech.adc.accessToken() } }
+        // Fetch the Google sign-in token now, so the first read doesn't wait for it, and keep
+        // checking so an expired sign-in shows in the menu bar before a read falls back.
+        google.start()
+        google.$expired.removeDuplicates().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateIcon() }
+        }.store(in: &bag)
         settings.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
                 self?.engine.settingsChanged()
@@ -87,12 +114,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settings.debugLog {
             debugHooks = DebugHooks(engine: engine, refine: refine, client: client, reader: reader, speech: speech, settings: settings) { [weak self] in self?.openRefine(scope: $0) }
             debugHooks?.dictation = dictation
+            debugHooks?.google = google
             debugHooks?.appAction = { [weak self] name, arg in
                 switch name {
                 case "translate": self?.translate()
                 case "tone": self?.toneCheck()
                 case "summarize": self?.summarize()
                 case "voice-edit": self?.voiceEdit(arg)
+                case "status-item":
+                    let w = self?.statusItem.button?.window
+                    let screens = NSScreen.screens.map { "\($0.frame)" }.joined(separator: " ")
+                    Log.info("status item: template \(self?.statusItem.button?.image?.isTemplate ?? true), dot \(self.map { !$0.warningDot.isHidden } ?? false) \(self?.warningDot.frame ?? .zero), visible \(self?.statusItem.isVisible ?? false), frame \(w?.frame ?? .zero), occlusion visible \(w?.occlusionState.contains(.visible) ?? false), screens \(screens)")
                 default: break
                 }
             }
@@ -297,9 +329,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateIcon() {
         let symbol = !settings.enabled ? "pencil.slash" : (AX.isTrusted ? "pencil.line" : "exclamationmark.triangle")
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Lex")
+        // An orange dot while the Google sign-in needs renewing (Google voices and dictation are off).
+        let warn = google.expired && settings.enabled && AX.isTrusted
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: warn ? "Lex: Google sign-in expired" : "Lex")
         image?.isTemplate = true
         statusItem?.button?.image = image
+        warningDot.isHidden = !warn
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -312,6 +347,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if !settings.hasAPIKey {
             menu.addItem(item("Add API Key…", #selector(openSettingsFromMenu)))
         }
+        if google.expired {
+            let note = NSMenuItem(title: "Google sign-in expired: reading aloud uses the macOS voice", action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            let signIn = item(google.signingIn ? "Waiting for Google Sign-In in Your Browser…" : "Sign In to Google Again…", #selector(signInToGoogle))
+            signIn.isEnabled = !google.signingIn
+            signIn.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+            menu.addItem(signIn)
+        }
+        google.check()
         menu.addItem(.separator())
 
         let refineItem = item("Refine Text", #selector(refineFromMenu))
@@ -386,9 +431,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openSettingsFromMenu() { openSettings() }
 
+    @objc private func signInToGoogle() { google.signIn() }
+
     private func openSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client, speech: speech, reader: reader)))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(settings: settings, client: client, speech: speech, reader: reader, google: google)))
             window.title = "Lex Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false

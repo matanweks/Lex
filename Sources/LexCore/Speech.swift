@@ -187,6 +187,19 @@ public final class GoogleADC: @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
     private var token: (value: String, expires: Date, fileDate: Date?)?
+    /// Google turned down the saved sign-in (the organisation's session policy expired it).
+    /// Stays set until gcloud saves a new sign-in, so requests fail at once instead of retrying.
+    private var expired = false
+    private var expiredFileDate: Date?
+    /// Called when the sign-in becomes expired (true) or works again (false). Any thread.
+    public var onExpiredChange: ((Bool) -> Void)?
+
+    /// Whether Google turned down the saved sign-in and no new one has been saved since.
+    public var isExpired: Bool {
+        let fileDate = modificationDate()
+        lock.lock(); defer { lock.unlock() }
+        return expired && expiredFileDate == fileDate
+    }
 
     public init(file: URL = GoogleADC.defaultFile, session: URLSession = .shared) {
         self.file = file
@@ -211,8 +224,12 @@ public final class GoogleADC: @unchecked Sendable {
     /// has saved a new sign-in since.
     public func accessToken() async throws -> (token: String, quotaProject: String?) {
         guard let creds = credentials() else { throw SpeechError.missingKey(.google) }
-        let fileDate = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let fileDate = modificationDate()
         lock.lock()
+        if expired, expiredFileDate == fileDate {
+            lock.unlock()
+            throw SpeechError.signInExpired
+        }
         if let t = token, t.expires > Date().addingTimeInterval(60), t.fileDate == fileDate {
             lock.unlock()
             return (t.value, creds.quotaProject)
@@ -228,15 +245,42 @@ public final class GoogleADC: @unchecked Sendable {
         ])
         let (data, response) = try await session.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if Self.signInRejected(status: status) {
+            setExpired(true, fileDate: fileDate)
+            throw SpeechError.signInExpired
+        }
         guard status == 200, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let value = obj["access_token"] as? String else {
-            throw SpeechError.signInExpired
+            // A server hiccup or rate limit: the sign-in itself may be fine, so try again next time.
+            throw SpeechError.http(.google, status, String(decoding: data.prefix(200), as: UTF8.self))
         }
         let lifetime = (obj["expires_in"] as? NSNumber)?.doubleValue ?? 3600
         lock.lock()
         token = (value, Date().addingTimeInterval(lifetime), fileDate)
         lock.unlock()
+        setExpired(false, fileDate: nil)
         return (value, creds.quotaProject)
+    }
+
+    /// The token endpoint answers 400 (invalid_grant, reauth required) or 401 (invalid_client)
+    /// when the saved sign-in no longer works. Signing in again fixes every one of these.
+    public static func signInRejected(status: Int) -> Bool { status == 400 || status == 401 }
+
+    /// Read fresh each time: URL resource values are cached on the URL, which hid new sign-ins.
+    private func modificationDate() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+    }
+
+    /// Marks the sign-in expired for this saved file, or working again, and reports a change.
+    private func setExpired(_ value: Bool, fileDate: Date?) {
+        lock.lock()
+        let changed = expired != value
+        expired = value
+        expiredFileDate = fileDate
+        if value { token = nil }
+        let callback = onExpiredChange
+        lock.unlock()
+        if changed { callback?(value) }
     }
 
     static func form(_ fields: [String: String]) -> Data {
@@ -301,7 +345,7 @@ public enum SpeechError: LocalizedError, Equatable {
         case .missingKey(let p): return p == .google
             ? "Sign in with gcloud or add a Google API key in Settings › Read aloud."
             : "Add your ElevenLabs API key in Settings."
-        case .signInExpired: return "Your Google sign-in has expired. Run: gcloud auth application-default login"
+        case .signInExpired: return "Your Google sign-in expired. Choose Sign In to Google Again in the Lex menu."
         case .http(let p, let code, let message):
             let name = p == .google ? "Google" : "ElevenLabs"
             if p == .google, code == 403 || code == 400 && message.contains("API key") {

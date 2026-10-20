@@ -18,7 +18,7 @@ A personal Grammarly for macOS that works in every app. It checks what you type 
 | Type a trigger and a space | **Snippet**: `;cal ` becomes your saved text | Any text field Lex checks |
 | **esc** | Cancels dictation, or closes a panel | |
 
-§ is the key left of 1 on ISO keyboards. Every shortcut can be changed in Settings, and each one is also in the menu-bar menu.
+§ is the key left of 1 on ISO keyboards. Every shortcut can be changed in Settings, and each one is also in the menu-bar menu. ⌘-drag the Lex icon to move it in the menu bar; it keeps that spot.
 
 ### Inside the panel
 
@@ -135,6 +135,8 @@ On first launch:
    gcloud services enable texttospeech.googleapis.com --project PROJECT_ID
    ```
    Then click **Check connection** in Settings › Read aloud. For Hebrew dictation, also enable Speech-to-Text on the project: `gcloud services enable speech.googleapis.com --project PROJECT_ID`.
+
+   Some organisations end gcloud sign-ins after a day or so. When Google turns the sign-in down, the Lex icon gets an orange dot. Reading aloud then uses the macOS voice, and Google dictation stops, until you choose **Sign In to Google Again…** from the Lex menu (or **Sign in again** in Settings). That runs `gcloud auth application-default login`, which opens Google in your browser, and keeps your billing project. Lex picks up the new sign-in without a restart.
 4. Allow the microphone and Input Monitoring the first time you hold the talk key. Settings › Dictation shows both.
 
 ### Settings
@@ -178,6 +180,7 @@ On first launch:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths.
 - `translate`, `tone`, `summarize`, `voice-edit:<instruction>`, `select:<text>`, `panel-state`, `panel-accept` and `panel-close` drive the panels.
+- `google-state` logs the Google sign-in state and where gcloud is; `google-preview:on|off` shows the expired-sign-in look without touching the sign-in; `status-item` logs where the menu-bar icon is.
 - `speak:<text>`, `speak-skip:<seconds>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 - `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
 - `live-test` feeds sample speech to the live Apple recognizer at talking pace and times the words. `pipeline-test` checks a spoken snippet name and a Hebrew-to-English dictation without a text field.
@@ -202,5 +205,5 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, settings.
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings.
 - `TestPages/`: browser test fields for the debug commands.

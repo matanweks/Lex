@@ -492,3 +492,83 @@ final class AssistTests: XCTestCase {
         XCTAssertTrue(r.hasPrefix("<style>Casual</style>"))
     }
 }
+
+/// Answers Google's token endpoint with canned statuses, counting the requests.
+final class TokenStub: URLProtocol {
+    static var statuses: [Int] = []
+    static var requests = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+        Self.requests += 1
+        let status = Self.statuses.isEmpty ? 200 : Self.statuses.removeFirst()
+        let body = status == 200 ? #"{"access_token":"tok","expires_in":3600}"#
+            : #"{"error":"invalid_grant","error_description":"reauth related error (invalid_rapt)"}"#
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!,
+                            cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+final class GoogleSignInTests: XCTestCase {
+    private var dir: URL!
+    private var file: URL!
+    private var adc: GoogleADC!
+    private var changes: [Bool] = []
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        file = dir.appendingPathComponent("adc.json")
+        try Data(#"{"type":"authorized_user","client_id":"id","client_secret":"s","refresh_token":"r","quota_project_id":"p"}"#.utf8).write(to: file)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TokenStub.self]
+        adc = GoogleADC(file: file, session: URLSession(configuration: config))
+        changes = []
+        adc.onExpiredChange = { [unowned self] in self.changes.append($0) }
+        TokenStub.statuses = []
+        TokenStub.requests = 0
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    func testExpiredSignInFailsFastUntilANewOneIsSaved() async throws {
+        TokenStub.statuses = [400]
+        do { _ = try await adc.accessToken(); XCTFail("expected an expired sign-in") } catch {
+            XCTAssertEqual(error as? SpeechError, .signInExpired)
+        }
+        XCTAssertTrue(adc.isExpired)
+        // No new sign-in yet: fails at once, without asking Google again.
+        do { _ = try await adc.accessToken(); XCTFail("expected an expired sign-in") } catch {
+            XCTAssertEqual(error as? SpeechError, .signInExpired)
+        }
+        XCTAssertEqual(TokenStub.requests, 1)
+
+        // gcloud saves a new sign-in: Lex asks again, and it works.
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: file.path)
+        let token = try await adc.accessToken()
+        XCTAssertEqual(token.token, "tok")
+        XCTAssertEqual(token.quotaProject, "p")
+        XCTAssertFalse(adc.isExpired)
+        XCTAssertEqual(changes, [true, false])
+    }
+
+    func testServerErrorIsNotAnExpiredSignIn() async throws {
+        TokenStub.statuses = [503]
+        do { _ = try await adc.accessToken(); XCTFail("expected an error") } catch {
+            XCTAssertNotEqual(error as? SpeechError, .signInExpired)
+        }
+        XCTAssertFalse(adc.isExpired)
+        // The next try goes to Google again and succeeds.
+        let token = try await adc.accessToken()
+        XCTAssertEqual(token.token, "tok")
+        XCTAssertEqual(TokenStub.requests, 2)
+        XCTAssertEqual(changes, [])
+    }
+}
