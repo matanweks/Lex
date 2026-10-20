@@ -1,8 +1,41 @@
 # Lex
 
-A personal Grammarly for macOS: checks what you type in any app, and refines a sentence the moment you finish it.
+A personal Grammarly for macOS that works in every app. It checks what you type as you type, refines a sentence the moment you finish it, and translates, summarizes, reads aloud and takes dictation, all from the keyboard.
 
-## How it works
+## Shortcuts
+
+| Shortcut | What it does | Works on |
+|---|---|---|
+| **⌃1** | **Refine**: a better version of what you wrote, with ↵ to put it in | The sentence you just finished, or the selection |
+| **⌃2** | **Translate** between Hebrew and English | The selection, or the sentence you're in |
+| **⌃3** | **Summarize & reply**: a summary, key points, a drafted reply | Selected text anywhere (an email, a thread, a page) |
+| **⌃4** | **Tone check**: how your message will land, plus a better-toned version | The message you're writing, or the selection |
+| **⌃§** | **Fix all**: applies every correction in the field at once | The field you're typing in |
+| **⌥§** | **Read aloud**; press again to stop | The selection, or the paragraph at the cursor |
+| Hold **Right ⌥** | **Dictate**: talk, let go, and the text is typed at your cursor | Any text field |
+| Double-tap **Right ⌥** | **Hands-free dictation**; tap once more to finish | Any text field |
+| Select text, hold **Right ⌥** | **Voice edit**: say what to change ("make this friendlier") | The selection |
+| Type a trigger and a space | **Snippet**: `;cal ` becomes your saved text | Any text field Lex checks |
+| **esc** | Cancels dictation, or closes a panel | |
+
+§ is the key left of 1 on ISO keyboards. Every shortcut can be changed in Settings, and each one is also in the menu-bar menu.
+
+### Inside the panel
+
+The panel that ⌃1, ⌃2, ⌃3 and ⌃4 open streams its answer as it's written.
+
+| Key | In your own text (⌃1, ⌃2, ⌃4) | On someone else's text (⌃3, or ⌃2 outside a text field) |
+|---|---|---|
+| **↵** | Replaces the text in place | Copies the result |
+| **⌘1–8** / **⌘1–4** | Improve, Fix only, Shorter, Clearer, Friendlier, Formal, Direct, Translate | Summary, Key points, Draft reply, Translate |
+| Type, then **↵** | Applies your own instruction ("less salesy") | Reworks the result ("shorter, and in Hebrew") |
+| **Tab** | Switches scope: sentence, paragraph, whole field | |
+| **⌘Z** · **⌘C** · **⌘D** | Undo a step · copy · show or hide the changes | Undo a step · copy |
+| **esc** | Closes the panel | Closes the panel |
+
+## Features
+
+### Checking as you type
 
 - **Instant layer:** macOS's own spelling and grammar checker runs on every keystroke, offline, in a few milliseconds.
 - **Claude layer:** each sentence goes to Claude Haiku 5.5 the moment you finish it (`.` `!` `?` or a line break), or after a 0.7-second pause on a longer unfinished sentence.
@@ -10,59 +43,87 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **Cached per sentence:** results are stored by sentence text, so editing one sentence never re-checks the others.
   - **No flicker:** while you edit a sentence, its existing underlines stay up until the re-check returns.
   - **Authoritative:** once Claude has reviewed a sentence, the spell checker's flags on names and jargon there are cleared.
-- **Refine:** press **⌃1** after you finish a sentence. A panel streams a rewrite from Claude Sonnet 5.5 (changeable in Settings) with the changes highlighted.
-  - **↵** replaces the text in place.
-  - **⌘1–7** applies Improve, Fix only, Shorter, Clearer, Friendlier, Formal or Direct, stacked on the current version. **⌘8** translates it between Hebrew and English.
-  - Type an instruction ("less salesy") and press **↵** to apply it.
-  - **Tab** switches scope: sentence, paragraph, or the whole field.
-  - **⌘Z** undoes a step, **⌘C** copies, **⌘D** toggles the change view, **esc** closes.
-  - With a selection, the shortcut refines the selection. The badge next to the field refines the whole field.
+- **Fixing:** hover an underline to see the fix and apply it with a click, ignore it, or add the word to your dictionary. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
+- **Badge:** a small badge next to the field shows the issue count. Clicking it refines the whole field.
 
-- **Read aloud:** select text anywhere and press **⌥§** to hear it; press again to stop.
-  - **Source:** the selection comes through Accessibility, or by copying it (web pages, PDFs, Mail) and then restoring your clipboard. With nothing selected in a text field, Lex reads the paragraph at the cursor. Password fields are never read.
-  - **Voices:**
-    - **Google Chirp 3 HD** (default): natural voices; the first 1M characters each month are free, then $0.03 per 1,000.
-    - **ElevenLabs:** $0.04 per 1,000 characters (Flash) or $0.08 (Multilingual, v3).
-    - **macOS voice:** free, offline; the fallback when no cloud voice is set up.
-  - **Speed:** text is split at sentence boundaries into small-then-growing chunks (~90 → 240 → 600 → 1,200 characters). The first audio arrives in about 1.1 s, and the next chunk is fetched while the current one plays. The language is detected, so Hebrew text gets a he-IL voice.
-  - **Cost:** audio is cached in `~/Library/Caches/dev.lex.app/speech`, so hearing the same text again is free. Settings shows this month's characters.
-  - **Mini player:** pause, 10-second back and forward (across chunks, with Google or ElevenLabs voices), speed (0.8×–2×) and stop.
+### Refine (⌃1)
 
-- **Dictation (like Wispr Flow):** hold **Right ⌥**, talk, let go, and the text is typed at your cursor in any app.
-  - **Hands-free:** double-tap the key, then tap once more to finish. Esc cancels.
-  - **No accidental starts:** a quick tap, or ⌥ used with another key (typing a special character), never dictates. fn 🌐 and Right ⌘ are options in Settings.
-  - **Engine:** Auto follows your keyboard.
-    - **English keyboard:** Apple's on-device recognizer. Free and private; a short sentence is typed about 0.5 s after release.
-    - **Hebrew keyboard:** Google Chirp 3 (Hebrew and English, about $0.016 per minute, through the gcloud sign-in). Long dictation is cut at natural pauses and sent while you talk, so only the last piece is left when you let go.
-  - **Tidy-up:** when a transcript has fillers or a spoken correction ("Tuesday, no wait, Wednesday"), or is long, Claude Haiku tidies it, keeping your words and language. If the result strays from the transcript, the raw transcript is used instead. **Words to know** in Settings are passed to both as spelling hints.
-  - **Live words:** with Apple's engine, the pill shows your words as you speak, and the text is ready about 0.1 s after you let go. Long Google dictation shows each piece as it comes back.
-  - **Voice editing:** select text, then hold the key and say what to change ("make this friendlier", "translate this to Hebrew"). The pill says "Say how to change the selection", and the refine panel opens with the result. It can be turned off in Settings.
-  - **Spoken snippets:** say a snippet's name ("insert my calendar link") and its text is typed.
-  - **Hebrew to English (optional):** Hebrew speech is typed in English, translated as part of the tidy-up.
-  - **Your style:** the tidy-up follows the style set for the app you're in (see Your style below).
-  - **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
+A panel streams a rewrite from Claude Sonnet 5.5 (changeable in Settings), with the changes highlighted. Each preset stacks on the current version, so "Shorter" then "Friendlier" does both. With a selection, ⌃1 refines the selection.
 
-- **Fix all:** press **⌃§** to apply every correction in the field at once.
-  - **What's included:** spelling, grammar, punctuation and word choice. Clarity rewrites stay manual. The word you just typed counts too.
-  - **Accuracy:** Lex first has Claude check any sentence it hasn't reviewed, waiting up to 2.5 s, so a name only the spell checker flagged isn't "fixed".
-  - **How fixes go in:** fixes are applied one by one from the end of the text, so formatting such as @mentions survives. Each waits until the app has taken the previous one, and your clipboard is saved and restored once for the whole batch.
+### Fix all (⌃§)
 
-- **Translate:** press **⌃2** to translate the selection, or the sentence you're in, between Hebrew and English. In a field you're writing in, **↵** replaces the text. Anywhere else (a web page, an email you're reading), **↵** copies the translation.
-- **Summarize & reply:** select an email, thread or page and press **⌃3** for a summary. **⌘2–4** switch to key points with a to-do line, a drafted reply, or a translation. **↵** copies the result. With nothing selected in a text field, the whole field is used.
-- **Tone check:** press **⌃4** in a message you're writing. In two lines, Claude says how it will land and names the biggest risk, next to a better-toned version you can put in with **↵**.
-- **Snippets:** saved text you insert by saying its name while dictating, or by typing its trigger and a space (`;cal `). Add them in Settings › Snippets.
-- **Learns your words:** a capitalised name or term that the spell checker flags but Claude accepts, in two different sentences, is learned. It stops being underlined, and dictation spells it right. **Learn** on a suggestion card does the same. Settings › Dictation lists learned words, and you can remove any of them.
-- **Your style:** Settings › Your style holds how text should read in chat apps, email and documents. Refine, tone fixes and the dictation tidy-up follow the style for the app you're in. Optionally, Lex keeps sentences you wrote that Claude found nothing to fix (on this Mac, at most 40). From those it builds a short description of your voice, used when refining and drafting replies. Building it sends those sentences to Claude once.
+- **What's included:** spelling, grammar, punctuation and word choice. Clarity rewrites stay manual. The word you just typed counts too.
+- **Accuracy:** Lex first has Claude check any sentence it hasn't reviewed, waiting up to 2.5 s, so a name only the spell checker flagged isn't "fixed".
+- **How fixes go in:** fixes are applied one by one from the end of the text, so formatting such as @mentions survives. Each waits until the app has taken the previous one, and your clipboard is saved and restored once for the whole batch.
 
-Hover an underline to see the fix and apply it with a click. In message boxes and other small fields, the card opens above or below the field so it never covers your text. A click that lands just as the card appears is ignored, and clicking anywhere else dismisses it.
+### Translate (⌃2)
 
-## Build
+Translates between Hebrew and English: Hebrew text goes to English, anything else to Hebrew. In a field you're writing in, it works on the selection or the sentence you're in, and ↵ replaces it. Anywhere else (a web page, an email you're reading), it works on the selection and ↵ copies the translation.
+
+### Summarize & reply (⌃3)
+
+Select an email, thread or page and press ⌃3 for a summary of what it's about, what's asked and any deadline. **⌘2** lists the key points with a "To do:" line, **⌘3** drafts a reply as you (unknown facts go in [brackets]), and **⌘4** translates it. ↵ copies the result; nothing is written over the original. With nothing selected in a text field, the whole field is used.
+
+### Tone check (⌃4)
+
+Press ⌃4 in a message you're writing. In two lines, Claude says how the reader will likely take it and names the biggest risk. Next to that is a version with a better tone, keeping your content, which ↵ puts in. Without a selection it reads the whole message.
+
+### Read aloud (⌥§)
+
+- **Source:** the selection comes through Accessibility, or by copying it (web pages, PDFs, Mail) and then restoring your clipboard. With nothing selected in a text field, Lex reads the paragraph at the cursor. Password fields are never read.
+- **Voices:**
+  - **Google Chirp 3 HD** (default): natural voices; the first 1M characters each month are free, then $0.03 per 1,000.
+  - **ElevenLabs:** $0.04 per 1,000 characters (Flash) or $0.08 (Multilingual, v3).
+  - **macOS voice:** free, offline; the fallback when no cloud voice is set up.
+- **Speed:** text is split at sentence boundaries into small-then-growing chunks (~90 → 240 → 600 → 1,200 characters). The first audio arrives in about 1.1 s, and the next chunk is fetched while the current one plays. The language is detected, so Hebrew text gets a Hebrew voice.
+- **Cost:** audio is cached in `~/Library/Caches/dev.lex.app/speech`, so hearing the same text again is free. Settings shows this month's characters.
+- **Mini player:** pause, 10 seconds back and forward (with Google or ElevenLabs voices), speed (0.8×–2×) and stop.
+
+### Dictation (hold Right ⌥)
+
+Like Wispr Flow: hold the key, talk, let go, and the text is typed at your cursor in any app.
+
+- **Hands-free:** double-tap the key, then tap once more to finish. Esc cancels.
+- **No accidental starts:** a quick tap, or ⌥ used with another key (typing a special character), never dictates. fn 🌐 and Right ⌘ are options in Settings.
+- **Live words:** with Apple's engine, the pill shows your words as you speak, and the text is ready about 0.1 s after you let go. Long Google dictation shows each piece as it comes back.
+- **Engine:** Auto follows your keyboard layout.
+  - **English keyboard:** Apple's on-device recognizer. Free and private.
+  - **Hebrew keyboard:** Google Chirp 3 (Hebrew and English, about $0.016 per minute, through the gcloud sign-in). Long dictation is cut at natural pauses and sent while you talk, so only the last piece is left when you let go.
+- **Tidy-up:** when a transcript has fillers or a spoken correction ("Tuesday, no wait, Wednesday"), or is long, Claude Haiku tidies it, keeping your words and language. If the result strays from the transcript, the raw transcript is used instead. **Words to know** in Settings, plus learned words, are passed to both as spelling hints.
+- **Voice editing:** select text, then hold the key and say what to change ("make this friendlier", "translate this to Hebrew"). The pill says "Say how to change the selection", and the refine panel opens with the result. It can be turned off in Settings.
+- **Spoken snippets:** say a snippet's name ("insert my calendar link") and its text is typed.
+- **Hebrew to English (optional):** Hebrew speech is typed in English, translated as part of the tidy-up.
+- **Your style:** the tidy-up follows the style for the app you're in.
+- **Copy last dictation:** in the menu-bar menu, in case it landed in the wrong place.
+- **Key detection:** the talk key is watched with a listen-only event tap at the head of the queue, so tools like Wispr Flow can't swallow it first. This needs Input Monitoring and Microphone access.
+
+### Snippets
+
+Saved text you insert by saying its name while dictating, or by typing its trigger and a space (`;cal `). A trigger only fires at the start of a word, and the space is kept after the inserted text. Add, edit and delete them in Settings › Snippets.
+
+### Learns your words
+
+A capitalised name or term (Pelles, AppFab) that the spell checker flags but Claude accepts, in two different sentences, is learned. It stops being underlined, and dictation spells it right. Lowercase words are never learned automatically, so real typos aren't. **Add to dictionary** on a suggestion card does the same by hand. Settings › Dictation lists learned words, and you can remove any of them.
+
+### Your style and voice
+
+- **Per-app style:** Settings › Your style holds how text should read in chat apps (Slack, WhatsApp, Messages…), email (Mail, Outlook, Superhuman…), documents (Notion, Pages, Word…) and everything else. Refine, tone fixes and the dictation tidy-up follow the style for the app you're in. Chat, email and documents start with defaults you can edit.
+- **Your voice (optional):** turn on "Collect sentences I write" and Lex keeps sentences you typed that Claude found nothing to fix (on this Mac, at most 40). After 8, **Build my voice** turns them into a short description of how you write: sentence length, formality, greetings, habits. Refine, tone fixes and drafted replies then sound like you. You can also write or edit the description yourself, switch it off, or clear everything.
+
+## Requirements
+
+- macOS 14 or later. Apple's on-device dictation and live words need macOS 26; on older systems dictation uses Google.
+- An Anthropic API key.
+- Optional: a Google Cloud project for the Google voices and Hebrew dictation, or an ElevenLabs key.
+- To build: Xcode 26 or later (the macOS 26 SDK, for Apple's speech recognizer).
+
+## Build and set up
 
 ```bash
 ./scripts/build.sh --open
 ```
 
-The script builds a release binary, wraps it as `Lex.app`, signs it with your Apple Development identity and installs it to `~/Applications`. A stable signature keeps the Accessibility grant and Keychain access across rebuilds.
+The script builds a release binary, wraps it as `Lex.app`, signs it with your Apple Development identity and installs it to `~/Applications`. A stable signature keeps the Accessibility grant and Keychain access across rebuilds; without an identity it signs ad hoc, and you re-allow Lex after each build.
 
 On first launch:
 1. Allow Lex under System Settings › Privacy & Security › Accessibility.
@@ -76,10 +137,31 @@ On first launch:
    Then click **Check connection** in Settings › Read aloud. For Hebrew dictation, also enable Speech-to-Text on the project: `gcloud services enable speech.googleapis.com --project PROJECT_ID`.
 4. Allow the microphone and Input Monitoring the first time you hold the talk key. Settings › Dictation shows both.
 
-## Notes
+### Settings
 
-- Text you type in checked apps is sent to the Anthropic API with your key. Password fields are never read. Terminals, code editors and password managers are off by default; turn Lex off for any app from the menu-bar icon.
-- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Lex selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name. Before replacing anything, Lex checks that the selected text is exactly the words it means to fix, and aborts otherwise. Some editors (the Claude app's composer) count selection offsets one or more characters away from the text they report. Lex detects that shift from what actually got selected, corrects the selection, and checks again before editing.
+| Section | What's there |
+|---|---|
+| Status and API key | Accessibility and key status, **Test connection** |
+| Models | The model for checking as you type (or off) and for refine |
+| Behavior | All panel shortcuts, the issue badge, open at login |
+| Your style | Per-app styles, your voice description, collecting and building it |
+| Snippets | Name, trigger and text for each snippet |
+| Read aloud | Voice service, voice, speed, shortcut, this month's usage |
+| Dictation | Permissions, talk key, engine, languages, tidy-up, voice editing, Hebrew to English, words to know, learned words, this month's usage |
+| Apps Lex stays out of | Apps where Lex is off; add one from the menu bar while you're in it |
+
+## Privacy and costs
+
+- **What goes where:** text you type in checked apps, and text you send to a panel, goes to the Anthropic API with your key. Text you read aloud goes to the voice service you pick. Dictation audio stays on your Mac with Apple's engine and goes to Google with Google's. Building your voice sends the collected sentences to Claude once.
+- **Never read:** password fields. Terminals, code editors and password managers are off by default; turn Lex off for any other app from the menu-bar icon.
+- **Stored on your Mac:** API keys in the Keychain; settings, snippets, learned words and voice sentences in Lex's preferences; read-aloud audio in the cache.
+- **Costs:** Claude usage is billed to your API key. Google voices are free for the first 1M characters a month, then $0.03 per 1,000; Google dictation is about $0.016 per minute; Apple dictation and the macOS voice are free. Settings shows this month's voice characters and dictation minutes.
+- **Debug log** (off by default; timings and counts only, never your text): `defaults write dev.lex.app debugLog -bool true`, then see `~/Library/Logs/Lex.log`.
+
+## How edits get into other apps
+
+- Edits go through Accessibility in native apps. In Chromium-based apps (Chrome, Dia, Arc, Codex) and Electron apps (Slack, Claude, Linear, Notion), Lex selects the text and pastes, then restores your clipboard, so the editor's own undo and state stay intact. Chromium apps are recognised by their renderer helper app, not by name.
+- Before replacing anything, Lex checks that the selected text is exactly the words it means to fix, and aborts otherwise. Some editors (the Claude app's composer) count selection offsets one or more characters away from the text they report. Lex detects that shift from what actually got selected, corrects the selection, and checks again before editing.
 - Finding where a word is on screen varies by app. Lex tries, in order, and remembers per field what worked:
   1. the field's own position API (native apps, Chrome);
   2. the text runs inside rich editors (Claude, Slack);
@@ -89,19 +171,21 @@ On first launch:
   Positions that cover the whole field are rejected. Where nothing works, the badge still shows the issue count and refine still works.
 - Suggestions that would mangle text, such as several words replaced by nothing or by bare punctuation, are dropped.
 - Removing a word takes one neighbouring space with it. In paste-based apps, the removal is a Delete keystroke on the verified selection, since editors ignore an empty paste. Placeholders like "(remove)" in Claude's answer count as deletions, and when Claude corrects itself mid-answer, the later fix wins.
-- Debug log (timings and counts only, never your text): `defaults write dev.lex.app debugLog -bool true`, then see `~/Library/Logs/Lex.log`.
 
 ## Testing
 
 `swift test` runs the core tests. With debug logging on, Lex also accepts commands posted as the distributed notification `dev.lex.debug`:
 - `benchmark` and `quality` time and spot-check the models on fixed sample sentences.
 - `dump-field`, `apply-first`, `fix-all` and `refine-accept` drive the real fix and refine paths.
+- `translate`, `tone`, `summarize`, `voice-edit:<instruction>`, `select:<text>`, `panel-state`, `panel-accept` and `panel-close` drive the panels.
 - `speak:<text>`, `speak-skip:<seconds>`, `speak-state` and `tts-bench` exercise read-aloud; `tts-bench` times the configured cloud voice without playing anything.
 - `stt-test-apple` and `stt-test-google` speak sample sentences (English and Hebrew) with the Google voice, transcribe the audio and tidy it, so dictation can be tested without a person.
 - `live-test` feeds sample speech to the live Apple recognizer at talking pace and times the words. `pipeline-test` checks a spoken snippet name and a Hebrew-to-English dictation without a text field.
-- `translate`, `tone`, `summarize`, `voice-edit:<instruction>`, `select:<text>`, `panel-state`, `panel-accept` and `panel-close` drive the new panels. `dictate:plain|snippet|translate|command:<instruction>` runs sample speech through dictation as if the key were held; `snippet-test-add` and `snippet-test-remove` add and remove the snippet it uses.
+- `dictate:plain|snippet|translate|command:<instruction>` runs sample speech through dictation as if the key were held; `snippet-test-add` and `snippet-test-remove` add and remove the snippet it uses.
 
-The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field. Measured on 2026-10-19:
+The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field.
+
+Measured on 2026-10-19 and 2026-10-20:
 
 | | First underline or word | Full answer |
 |---|---|---|
@@ -109,13 +193,14 @@ The field commands only act on TextEdit, or on text that starts with `LEXTEST`; 
 | Refine, Haiku 5.5 | ~0.8 s | ~0.9 s |
 | Refine, Sonnet 5.5 | ~0.7 s | ~1.2 s |
 | Refine, Opus 5.5 | ~1.0–2.4 s | ~1.8–2.6 s |
-
-Live dictation (Apple, measured on 2026-10-20): the first words appear about 1.1 s in, and the final text is ready about 0.1 s after the speech ends. A Hebrew dictation is translated to English in about 0.8 s.
+| Live dictation, Apple | ~1.1 s into speech | ~0.1 s after you stop |
+| Hebrew dictation to English | | ~0.8 s for the translation |
 
 ## Layout
 
 - `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
-- `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
+- `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, key tap and HUD, hotkeys, settings.
+- `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, settings.
+- `TestPages/`: browser test fields for the debug commands.
