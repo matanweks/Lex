@@ -10,7 +10,7 @@ A personal Grammarly for macOS: checks what you type in any app, and refines a s
   - **Cached per sentence:** results are stored by sentence text, so editing one sentence never re-checks the others.
   - **No flicker:** while you edit a sentence, its existing underlines stay up until the re-check returns.
   - **Authoritative:** once Claude has reviewed a sentence, the spell checker's flags on names and jargon there are cleared.
-- **Refine:** press **⌃⌥R** after you finish a sentence. A panel streams a rewrite from Claude Sonnet 5.5 (changeable in Settings) with the changes highlighted.
+- **Refine:** press **⌥1** after you finish a sentence. A panel streams a rewrite from Claude Sonnet 5.5 (changeable in Settings) with the changes highlighted.
   - **↵** replaces the text in place.
   - **⌘1–7** applies Improve, Fix only, Shorter, Clearer, Friendlier, Formal or Direct, stacked on the current version.
   - Type an instruction ("less salesy") and press **↵** to apply it.
