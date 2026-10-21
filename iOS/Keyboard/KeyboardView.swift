@@ -23,7 +23,7 @@ struct KeyboardView: View {
                 } else if model.panel == .emoji {
                     emoji
                 } else {
-                    KeyGrid(look: typist.look) { typist.press($0) }
+                    KeyGrid(look: typist.look, typist: typist)
                         .accessibilityIdentifier("kb-keys")
                 }
             }
@@ -110,13 +110,22 @@ struct KeyboardView: View {
             }
         } else if let notice = model.notice {
             Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        } else if typist.fieldIsEmpty, model.hasFullAccess {
+            // Like Gboard's toolbar on an empty field: shortcuts instead of words.
+            HStack(spacing: 0) {
+                shortcut("arrowshape.turn.up.left", "Reply to copied") { model.performOnClipboard(.reply) }
+                shortcut("list.clipboard", "Clipboard") { model.tab = .clipboard; model.panel = .tools }
+                shortcut("text.badge.plus", "Snippets") { model.tab = .snippets; model.panel = .tools }
+                shortcut("face.smiling", "Emoji") { model.panel = .emoji }
+            }
         } else {
             HStack(spacing: 0) {
                 ForEach(Array(typist.suggestions.enumerated()), id: \.element) { i, suggestion in
                     if i > 0 { Divider().frame(height: 22) }
                     Button { typist.choose(suggestion) } label: {
                         Text(suggestion.kind == .keep ? "“\(suggestion.text)”" : suggestion.text)
-                            .font(.system(size: 17, weight: suggestion.kind == .correct && i == 1 ? .semibold : .regular))
+                            .font(.system(size: 17, weight: suggestion.best ? .semibold : .regular))
+                            .foregroundStyle(suggestion.kind == .keep ? .secondary : .primary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -129,6 +138,18 @@ struct KeyboardView: View {
                 }
             }
         }
+    }
+
+    private func shortcut(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 18))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func barButton(_ symbol: String, label: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
@@ -219,6 +240,10 @@ struct KeyboardView: View {
                 SettingChip(title: "Autocorrect", key: "autocorrect")
                 SettingChip(title: "Check sentences", key: "checkSentences")
                 Spacer()
+                Button("Forget my words") { typist.forgetWords() }
+                    .font(.caption.weight(.medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }

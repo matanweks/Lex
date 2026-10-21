@@ -16,7 +16,12 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     override func loadView() {
-        inputView = ClickingInputView(frame: .zero, inputViewStyle: .keyboard)
+        let input = ClickingInputView(frame: .zero, inputViewStyle: .keyboard)
+        // The keyboard says its own height from the start, so apps lay out around the real
+        // height. Otherwise iOS shows a default height first, and apps that don't follow the
+        // change (WhatsApp) end up with the keyboard over their message box.
+        input.allowsSelfSizing = true
+        inputView = input
     }
 
     override func viewDidLoad() {
@@ -42,7 +47,7 @@ final class KeyboardViewController: UIInputViewController {
         ])
         host.didMove(toParent: self)
         let height = view.heightAnchor.constraint(equalToConstant: 282)
-        height.priority = .defaultHigh
+        height.priority = UILayoutPriority(999)
         height.isActive = true
     }
 
@@ -55,6 +60,7 @@ final class KeyboardViewController: UIInputViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         model.disappeared()
+        typist.saveWords()
     }
 
     override func textDidChange(_ textInput: UITextInput?) {
@@ -97,11 +103,19 @@ final class KeyboardViewController: UIInputViewController {
         edited(current + text)
     }
 
+    /// Moves the cursor (the space-bar slide). The app reports the new position itself.
+    func moveCursor(by characters: Int) {
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: characters)
+        reportedAtLastEdit = nil
+    }
+
     /// Fields that ask for no autocorrection (codes, usernames) or hold addresses get no
-    /// suggestions, autocorrect or Claude checks.
+    /// suggestions, autocorrect or Claude checks. Turning off only the spell checker doesn't
+    /// count: WhatsApp does that for its message box.
     var correctsText: Bool {
         let proxy = textDocumentProxy
-        if proxy.autocorrectionType == .no || proxy.spellCheckingType == .no { return false }
+        if proxy.autocorrectionType == .no { return false }
+        if let type = proxy.textContentType, [.oneTimeCode, .username, .password, .newPassword, .emailAddress, .URL].contains(type) { return false }
         return ![UIKeyboardType.URL, .emailAddress, .twitter, .webSearch].contains(proxy.keyboardType ?? .default)
     }
 

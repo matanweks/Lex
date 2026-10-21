@@ -1,14 +1,17 @@
 import LexCore
 import UIKit
 
-/// Typing on the Lex keyboard: pages, shift, auto-capitals, the suggestion bar, autocorrect,
-/// your iOS text replacements, and Claude's fixes for each sentence you finish.
+/// Typing on the Lex keyboard: pages, shift, auto-capitals, the suggestion bar (completions
+/// and next-word predictions, learned from what you type), autocorrect, your iOS text
+/// replacements, and Claude's fixes for each sentence you finish.
 @MainActor
 final class Typist: ObservableObject {
+    /// One slot in the suggestion bar, which is laid out like Gboard's: the best in the middle.
     struct Suggestion: Identifiable, Hashable {
-        enum Kind { case keep, complete, correct }
+        enum Kind { case keep, word }
         let text: String
         let kind: Kind
+        var best = false
         var id: String { text }
     }
 
@@ -45,16 +48,50 @@ final class Typist: ObservableObject {
     private var undoCorrection: (typed: String, original: String)?
     private var checkTask: Task<Void, Never>?
     private var checkedSentence = ""
+    /// What you type, learned on this phone for suggestions (never sent anywhere).
+    private var words = WordModel()
+    private var unsaved = 0
+    private static var wordsFile: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("words.json")
+    }
 
     init() {
         language = KeyboardLanguage(rawValue: UserDefaults.standard.string(forKey: "layoutLanguage") ?? "") ?? .english
+        if let data = try? Data(contentsOf: Self.wordsFile), let saved = try? JSONDecoder().decode(WordModel.self, from: data) { words = saved }
     }
 
     var look: KeyGridView.Look {
         let ret = controller?.returnLook ?? ("return", false)
         return KeyGridView.Look(rows: KeyboardLayout.rows(page, language),
                                 shift: page == .letters && language == .english ? shift : .off,
-                                returnLabel: ret.0, returnProminent: ret.1)
+                                returnLabel: ret.0, returnProminent: ret.1, language: language)
+    }
+
+    /// True while the text field is empty: the bar shows Lex's shortcuts instead of words.
+    var fieldIsEmpty: Bool { (controller?.before ?? "").isEmpty && (controller?.textDocumentProxy.documentContextAfterInput ?? "").isEmpty }
+
+    func saveWords() {
+        guard unsaved > 0, let data = try? JSONEncoder().encode(words) else { return }
+        try? FileManager.default.createDirectory(at: Self.wordsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: Self.wordsFile, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        unsaved = 0
+    }
+
+    func forgetWords() {
+        words = WordModel()
+        try? FileManager.default.removeItem(at: Self.wordsFile)
+        afterChange()
+    }
+
+    /// Learns the word right before the cursor as a finished word (a space or punctuation follows).
+    private func learnWord(before text: String) {
+        guard controller?.correctsText == true else { return }
+        let word = TypingRules.currentWord(text)
+        guard !word.isEmpty else { return }
+        let start = TypingRules.startsSentence(String(text.dropLast(word.count)))
+        words.learn(word, after: start ? nil : Predictor.previousWord(text), atSentenceStart: start)
+        unsaved += 1
+        if unsaved >= 15 { saveWords() }
     }
 
     /// When the keyboard comes up: your text replacements, and digits for number fields.
@@ -78,6 +115,7 @@ final class Typist: ObservableObject {
         guard let c = controller else { return }
         switch action {
         case .character(let ch):
+            if ",.!?;:)".contains(ch) { learnWord(before: c.before) }
             c.type(page == .letters && shift != .off ? ch.uppercased() : ch)
             undoCorrection = nil
             if shift == .on { shift = .off; autoShifted = false }
@@ -86,6 +124,7 @@ final class Typist: ObservableObject {
         case .space:
             space(c)
         case .returnKey:
+            learnWord(before: c.before)
             c.type("\n")
             undoCorrection = nil
             sentenceMayHaveEnded()
@@ -131,6 +170,31 @@ final class Typist: ObservableObject {
         afterChange()
     }
 
+    /// A long-press alternate (a digit, an accented letter): typed like its key.
+    func typeAlternate(_ text: String) {
+        controller?.type(text)
+        undoCorrection = nil
+        if shift == .on { shift = .off; autoShifted = false }
+        afterChange()
+    }
+
+    /// Sliding on the space bar.
+    func moveCursor(by characters: Int) {
+        controller?.moveCursor(by: characters)
+        undoCorrection = nil
+        afterChange()
+    }
+
+    /// Held or swiped delete: whole words.
+    func deleteWords(_ count: Int) {
+        guard let c = controller else { return }
+        let n = TypingRules.charactersToDelete(words: count, in: c.before)
+        guard n > 0 else { return }
+        c.deleteBackward(n)
+        undoCorrection = nil
+        afterChange()
+    }
+
     private func space(_ c: KeyboardViewController) {
         let before = c.before
         // Two quick spaces after a word end the sentence.
@@ -146,9 +210,12 @@ final class Typist: ObservableObject {
         let word = TypingRules.currentWord(before)
         if !word.isEmpty, let fixed = replacements[word.lowercased()] ?? autocorrection(word) {
             c.deleteBackward(word.count)
-            c.type(fixed + " ")
+            c.type(fixed)
+            learnWord(before: c.before)
+            c.type(" ")
             undoCorrection = (fixed + " ", word)
         } else {
+            learnWord(before: before)
             c.type(" ")
             undoCorrection = nil
         }
@@ -172,25 +239,38 @@ final class Typist: ObservableObject {
                 autoShifted = false
             }
         }
-        suggestions = suggestions(for: TypingRules.currentWord(before))
+        suggestions = suggestions(before)
         if let first = fixes.first, !before.contains(first.sentence) { fixes = [] }
     }
 
-    private func suggestions(for word: String) -> [Suggestion] {
-        guard !word.isEmpty, controller?.correctsText == true else { return [] }
-        var found: [String] = []
-        if let phrase = replacements[word.lowercased()] { found.append(phrase) }
+    /// While typing a word: the word as typed, the best completion (middle) and one more.
+    /// After a space: the three likeliest next words, the best in the middle.
+    private func suggestions(_ before: String) -> [Suggestion] {
+        guard controller?.correctsText == true else { return [] }
+        let word = TypingRules.currentWord(before)
+        let start = TypingRules.startsSentence(String(before.dropLast(word.count)))
+        let previous = start ? nil : Predictor.previousWord(before)
+        var system: [String] = []
+        var guesses: [String] = []
         let lang = language.checkerCode
-        var misspelled = false
-        if UITextChecker.availableLanguages.contains(lang) {
-            let range = NSRange(location: 0, length: (word as NSString).length)
-            misspelled = checker.rangeOfMisspelledWord(in: word, range: range, startingAt: 0, wrap: false, language: lang).location != NSNotFound
-            if misspelled { found += checker.guesses(forWordRange: range, in: word, language: lang) ?? [] }
-            found += checker.completions(forPartialWordRange: range, in: word, language: lang) ?? []
+        if !word.isEmpty, UITextChecker.availableLanguages.contains(lang) {
+            let lower = word.lowercased()
+            let range = NSRange(location: 0, length: (lower as NSString).length)
+            system = checker.completions(forPartialWordRange: range, in: lower, language: lang) ?? []
+            if checker.rangeOfMisspelledWord(in: lower, range: range, startingAt: 0, wrap: false, language: lang).location != NSNotFound {
+                guesses = checker.guesses(forWordRange: range, in: lower, language: lang) ?? []
+            }
         }
-        var seen: Set<String> = [word.lowercased()]
-        let picks = found.map { TypingRules.matchCase($0, to: word) }.filter { seen.insert($0.lowercased()).inserted }.prefix(2)
-        return [Suggestion(text: word, kind: .keep)] + picks.map { Suggestion(text: $0, kind: misspelled ? .correct : .complete) }
+        if !word.isEmpty, let phrase = replacements[word.lowercased()] { guesses.insert(phrase, at: 0) }
+        var picks = Predictor.suggestions(prefix: word, previous: previous, atSentenceStart: start, system: system, guesses: guesses,
+                                          model: words, seed: .for(language))
+        if !word.isEmpty, word.first?.isUppercase == true { picks = picks.map { TypingRules.matchCase($0, to: word) } }
+        guard !word.isEmpty else {
+            // Gboard order: second, best, third.
+            let order = [1, 0, 2].filter { $0 < picks.count }
+            return order.map { Suggestion(text: picks[$0], kind: .word, best: $0 == 0) }
+        }
+        return [Suggestion(text: word, kind: .keep)] + picks.prefix(2).enumerated().map { Suggestion(text: $0.element, kind: .word, best: $0.offset == 0) }
     }
 
     /// A suggestion was tapped: it replaces the word being typed (the first keeps it as typed).
@@ -199,11 +279,12 @@ final class Typist: ObservableObject {
         let word = TypingRules.currentWord(c.before)
         if suggestion.kind == .keep {
             UITextChecker.learnWord(word)
-            c.type(" ")
         } else {
             c.deleteBackward(word.count)
-            c.type(suggestion.text + " ")
+            c.type(suggestion.text)
         }
+        learnWord(before: c.before)
+        c.type(" ")
         undoCorrection = nil
         sentenceMayHaveEnded()
         afterChange()
@@ -211,12 +292,14 @@ final class Typist: ObservableObject {
 
     private func autocorrection(_ word: String) -> String? {
         guard language == .english, let c = controller, c.correctsText, UserDefaults.standard.object(forKey: "autocorrect") as? Bool ?? true,
-              !UITextChecker.hasLearnedWord(word), UITextChecker.availableLanguages.contains(language.checkerCode) else { return nil }
+              !UITextChecker.hasLearnedWord(word), words.count(word) < 2,
+              UITextChecker.availableLanguages.contains(language.checkerCode) else { return nil }
         let lower = word.lowercased()
         let range = NSRange(location: 0, length: (lower as NSString).length)
         guard checker.rangeOfMisspelledWord(in: lower, range: range, startingAt: 0, wrap: false, language: language.checkerCode).location != NSNotFound else { return nil }
         let start = TypingRules.startsSentence(String(c.before.dropLast(word.count)))
-        return TypingRules.autocorrection(for: word, guesses: checker.guesses(forWordRange: range, in: lower, language: language.checkerCode) ?? [], atSentenceStart: start)
+        let guesses = checker.guesses(forWordRange: range, in: lower, language: language.checkerCode) ?? []
+        return TypingRules.autocorrection(for: word, guesses: guesses, atSentenceStart: start)
     }
 
     // MARK: Claude's fixes

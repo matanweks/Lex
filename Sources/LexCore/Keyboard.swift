@@ -57,7 +57,8 @@ public enum KeyboardLayout {
             KeyCap(page == .letters ? .numbers : .letters, page == .letters ? "123" : (language == .english ? "ABC" : "אבג"), width: 1.3),
             KeyCap(.emoji, "😊", width: 1.1),
             KeyCap(.language, language.other.keyLabel, width: 1.1),
-            KeyCap(.space, language == .english ? "space" : "רווח", width: language == .hebrew && page == .letters ? 3.6 : 4.6),
+            // Like Gboard, the space bar names the language.
+            KeyCap(.space, language == .english ? "English" : "עברית", width: language == .hebrew && page == .letters ? 3.6 : 4.6),
         ] + (language == .hebrew && page == .letters ? [KeyCap(.character("."), ".")] : []) + [
             KeyCap(.returnKey, "return", width: 1.9),
         ]

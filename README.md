@@ -159,9 +159,10 @@ Also in the app:
 
 A full keyboard for English and Hebrew with Lex built in, so you don't have to switch keyboards:
 
-- **Typing:** the iPhone's English layout and Gboard's Hebrew one (**EN**/**עב** switches, and dictation follows), numbers and symbols (₪ on the Hebrew page), shift and caps lock (double-tap), delete that speeds up when held, and a return key that says Send, Search or Go when the app asks. Keys show the letter above your finger, click and tap like the system keyboard, and follow fast two-thumb typing.
-- **The suggestion bar** completes the word you're typing, or corrects it. Your iOS text replacements work as usual.
-- **Autocorrect** fixes clear typos when you press space (one letter off, not names or capitalised words), and delete right after it puts back what you typed. Typing a sentence's end and a space capitalises the next word, and two spaces type a period.
+- **Typing:** the iPhone's English layout and Gboard's Hebrew one (**EN**/**עב** switches, and dictation follows; the space bar names the language), numbers and symbols (₪ on the Hebrew page), shift and caps lock (double-tap), and a return key that says Send, Search or Go when the app asks. Keys show the letter above your finger, click and tap like the system keyboard, and follow fast two-thumb typing.
+- **Like Gboard:** hold a top-row key for its number (the small digit in the corner) or any vowel for its accents, and slide to pick one. Slide along the space bar to move the cursor. Hold delete and it speeds up from letters to whole words; swipe left from delete to remove several words at once.
+- **The suggestion bar** works like Gboard's: while you type, the word as typed, the best completion (bold, in the middle) and one more; after a space, the three likeliest next words ("thank" → **you**). Lex learns the words you type and what you write after what, so your names, phrases and Hebrew words come up; that's kept only on the phone (**Forget my words** in the tools clears it). On an empty field the bar shows shortcuts instead: reply to a copied message, the clipboard, snippets and emoji. Your iOS text replacements work as usual.
+- **Autocorrect** fixes clear typos in English when you press space (one letter off, not names, and never a word you type often), and delete right after it puts back what you typed. Typing a sentence's end and a space capitalises the next word, and two spaces type a period.
 - **Claude checks each sentence you finish**, like the Mac's checking as you type: its fix shows in the bar ("recieve → receive"); tap it, or **Fix all**. Fields that ask for no autocorrection (codes, usernames) and address fields are left alone.
 - **Emoji:** a page with your recent ones first. For anything else, 🌐 still switches to Apple's emoji keyboard.
 - **The Lex row** over the keys: ✨ opens Lex's tools in place of the keys, 🎙 dictates, and **Autocorrect** and **Check sentences** can be switched off in the tools.
@@ -180,7 +181,7 @@ What iOS doesn't let a keyboard do:
 - **Keep the keyboard up during Apple's dictation.** Apple's mic shows a full-screen waveform instead with any keyboard but Apple's own.
 - **See the whole text.** iOS shows a keyboard only the last few sentences before the cursor, so that's what Lex works on (the label says how many words). To work on a longer passage, select it first.
 - **Work in password fields,** where iOS always uses its own keyboard. Some apps also block other keyboards.
-- **Use Apple's typing model.** Swipe typing, Apple's predictions and its autocorrect are the system keyboard's own; Lex's autocorrect is simpler, and Claude's sentence checks make up for some of it. Hebrew gets no word suggestions, since iOS's spelling checker has none for it.
+- **Use Apple's typing model.** Swipe typing, Apple's predictions and its autocorrect are the system keyboard's own; Lex's autocorrect is simpler, and Claude's sentence checks make up for some of it. Hebrew suggestions come from a built-in list and the words you type (iOS's spelling checker has none for Hebrew), and Hebrew isn't autocorrected.
 
 Not on iPhone yet: swipe typing, and syncing settings, snippets or the clipboard with the Mac.
 
@@ -301,6 +302,7 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Keyboard.swift`: the iPhone keyboard's layouts, its typing rules (auto-capitals, double-space period, autocorrect) and how it makes a fix behind the cursor.
+- `Sources/LexCore/Predictions.swift`: the keyboard's word model (what you type, learned on the phone), the built-in English and Hebrew hints, how suggestions are ranked, long-press alternates, and deleting whole words.
 - `Sources/LexCore/TextTarget.swift`: what the iPhone keyboard works on (the selection, or the text before the cursor) and the spacing it keeps.
 - `Sources/LexCore/Clipboard.swift`: the clipboard history store (index plus one file per entry), what's never kept, and search.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.

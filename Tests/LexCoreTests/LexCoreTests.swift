@@ -761,3 +761,62 @@ final class KeyboardTypingTests: XCTestCase {
         XCTAssertNil(CursorEdit.justFinishedSentence("I has went home"))
     }
 }
+
+final class PredictionTests: XCTestCase {
+    func testLearnsYourWordsAndWhatFollowsThem() {
+        var model = WordModel()
+        model.learn("Thanks", after: nil, atSentenceStart: true)
+        model.learn("Dana", after: "thanks", atSentenceStart: false)
+        model.learn("dana", after: "thanks", atSentenceStart: false)
+        XCTAssertEqual(model.count("dana"), 2)
+        XCTAssertEqual(model.count("Dana", after: "Thanks"), 2)
+        XCTAssertEqual(model.form(of: "dana"), "Dana")
+        XCTAssertEqual(model.form(of: "thanks"), "thanks")
+        XCTAssertEqual(model.next(after: "thanks").first?.word, "dana")
+        model.learn("http://x", after: nil, atSentenceStart: true)
+        model.learn("1234", after: nil, atSentenceStart: true)
+        XCTAssertEqual(model.words.count, 2)
+    }
+
+    func testCompletesWithYourWordsFirst() {
+        var model = WordModel()
+        for _ in 0..<3 { model.learn("Matan", after: "hi", atSentenceStart: false) }
+        let picks = Predictor.suggestions(prefix: "ma", previous: "hi", atSentenceStart: false,
+                                          system: ["make", "many", "may"], guesses: [], model: model, seed: .english)
+        XCTAssertEqual(picks.first, "Matan")
+        XCTAssertEqual(picks.count, 3)
+    }
+
+    func testPredictsTheNextWord() {
+        let model = WordModel()
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "thank", atSentenceStart: false, system: [], guesses: [], model: model, seed: .english).first, "you")
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "תודה", atSentenceStart: false, system: [], guesses: [], model: model, seed: .hebrew).first, "רבה")
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: nil, atSentenceStart: true, system: [], guesses: [], model: model, seed: .english).first, "I")
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "for", atSentenceStart: false, system: [], guesses: [], model: model, seed: .english).first, "the")
+        // A word Lex knows nothing about still gets three common next words.
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "attached", atSentenceStart: false, system: [], guesses: [], model: model, seed: .english).count, 3)
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "מצורף", atSentenceStart: false, system: [], guesses: [], model: model, seed: .hebrew).count, 3)
+    }
+
+    func testFindsThePreviousWordInTheSentence() {
+        XCTAssertEqual(Predictor.previousWord("Hey Dana, how ar"), "how")
+        XCTAssertEqual(Predictor.previousWord("Thank "), "Thank")
+        XCTAssertNil(Predictor.previousWord("Done. Th"))
+        XCTAssertNil(Predictor.previousWord(""))
+    }
+
+    func testDeletesWholeWordsBackFromTheCursor() {
+        XCTAssertEqual(TypingRules.charactersToDelete(words: 1, in: "hello big world"), 5)
+        XCTAssertEqual(TypingRules.charactersToDelete(words: 2, in: "hello big world  "), 11)
+        XCTAssertEqual(TypingRules.charactersToDelete(words: 1, in: "Done. "), 2)
+        XCTAssertEqual(TypingRules.charactersToDelete(words: 5, in: "hi"), 2)
+    }
+
+    func testLongPressOffersDigitsAndAccents() {
+        XCTAssertEqual(KeyAlternates.alternates(for: "e", .english), ["3", "é", "è", "ê", "ë"])
+        XCTAssertEqual(KeyAlternates.alternates(for: "E", .english).dropFirst().first, "É")
+        XCTAssertEqual(KeyAlternates.hint(for: "q", .english), "1")
+        XCTAssertNil(KeyAlternates.hint(for: "ק", .hebrew))
+        XCTAssertEqual(KeyAlternates.alternates(for: ".", .hebrew).first, ",")
+    }
+}
