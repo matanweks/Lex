@@ -820,3 +820,130 @@ final class PredictionTests: XCTestCase {
         XCTAssertEqual(KeyAlternates.alternates(for: ".", .hebrew).first, ",")
     }
 }
+
+final class LexiconTests: XCTestCase {
+    private let english = Lexicon(wordsFile: "the\t900\nthere\t300\nthey\t250\nthank\t200\nthanks\t180\nreceive\t50\nwired\t4\nweird\t60\n",
+                                  nextFile: "\tI the\nthank\tyou\nsee\tyou the\n")
+    private let hebrew = Lexicon(words: [("שלום", 5000), ("מה", 9000), ("נשמע", 1200), ("אני", 9500), ("בבית", 800), ("ממש", 2000), ("משמש", 10)],
+                                 next: ["מה": ["נשמע", "קורה"]])
+
+    func testCompletesWithTheCommonestWordsFirst() {
+        XCTAssertEqual(english.completions("th").map(\.word), ["the", "there", "they", "thank", "thanks"])
+        XCTAssertEqual(english.completions("thank").map(\.word), ["thanks"])
+        XCTAssertTrue(english.completions("zz").isEmpty)
+        XCTAssertEqual(english.next["thank"], ["you"])
+        XCTAssertEqual(english.next[""], ["I", "the"])
+        XCTAssertGreaterThan(english.commonness("the"), english.commonness("weird"))
+        XCTAssertEqual(english.commonness("unknown"), 0)
+    }
+
+    func testPredictsFromTheWordList() {
+        let next = Predictor.suggestions(prefix: "", previous: "see", atSentenceStart: false, system: [], guesses: [], model: WordModel(),
+                                         seed: WordSeed(common: [], next: [:], starters: []), lexicon: english)
+        XCTAssertEqual(next.first, "you")
+        let typing = Predictor.suggestions(prefix: "th", previous: nil, atSentenceStart: false, system: ["thorium"], guesses: [], model: WordModel(),
+                                           seed: WordSeed(common: [], next: [:], starters: []), lexicon: english)
+        XCTAssertEqual(typing.first, "the")
+        XCTAssertFalse(typing.contains("thorium"))
+    }
+
+    func testSuggestsContactsNamesAsWritten() {
+        let picks = Predictor.suggestions(prefix: "da", previous: "with", atSentenceStart: false, system: ["data"], guesses: [], model: WordModel(),
+                                          seed: .english, names: ["dana": "Dana", "daniel": "Daniel"])
+        XCTAssertEqual(Set(picks.prefix(2)), ["Dana", "Daniel"])
+    }
+
+    func testAutocorrectPrefersTheCommonerGuessAndLeavesKnownWords() {
+        XCTAssertEqual(TypingRules.autocorrection(for: "wierd", guesses: ["wired", "weird"], lexicon: english), "weird")
+        XCTAssertEqual(TypingRules.autocorrection(for: "wierd", guesses: ["wired", "weird"]), "wired")
+        XCTAssertNil(TypingRules.autocorrection(for: "there", guesses: ["three"], lexicon: english))
+    }
+
+    func testHebrewFixesTheFinalLetterAndNeighbouringKeySlips() {
+        XCTAssertEqual(TypingRules.hebrewCorrection(for: "שלומ", lexicon: hebrew), "שלום")
+        XCTAssertEqual(hebrew.completions("שלומ").map(\.word), ["שלום"])
+        // ע is beside כ on the Hebrew keyboard.
+        XCTAssertEqual(TypingRules.hebrewCorrection(for: "נשמכ", lexicon: hebrew), "נשמע")
+        XCTAssertEqual(TypingRules.hebrewCorrection(for: "שולם", lexicon: hebrew), "שלום")
+        XCTAssertNil(TypingRules.hebrewCorrection(for: "ממש", lexicon: hebrew))
+        XCTAssertNil(TypingRules.hebrewCorrection(for: "hello", lexicon: hebrew))
+        // A rare word isn't a confident fix.
+        XCTAssertNil(TypingRules.hebrewCorrection(for: "משמד", lexicon: hebrew))
+    }
+
+    func testHebrewNeighboursFollowTheLayout() {
+        let n = KeyboardLayout.neighbors(.hebrew)
+        XCTAssertTrue(n["כ"]!.contains("ג"))
+        XCTAssertTrue(n["כ"]!.contains("ע"))
+        XCTAssertFalse(n["כ"]!.contains("ק"))
+        XCTAssertTrue(KeyboardLayout.neighbors(.english)["g"]!.contains("h"))
+    }
+
+    func testTheNumberRowGoesOverTheLetters() {
+        let rows = KeyboardLayout.rows(.letters, .english, numberRow: true)
+        XCTAssertEqual(rows.count, 5)
+        XCTAssertEqual(rows[0].map(\.label).joined(), "1234567890")
+        XCTAssertEqual(KeyboardLayout.rows(.numbers, .english, numberRow: true).count, 4)
+    }
+
+    func testCleansSentenceCompletions() {
+        XCTAssertEqual(SentenceCompletion.clean(" see you there.\n(confident)", before: "I'll "), "see you there.")
+        XCTAssertEqual(SentenceCompletion.clean("\"in ten minutes.\"", before: "I'll be there "), "in ten minutes.")
+        XCTAssertEqual(SentenceCompletion.clean("be there in ten minutes", before: "I'll be "), "there in ten minutes")
+        XCTAssertEqual(SentenceCompletion.clean("", before: "So "), "")
+        XCTAssertEqual(SentenceCompletion.clean("None", before: "So "), "")
+        XCTAssertEqual(SentenceCompletion.clean(String(repeating: "word ", count: 20), before: "So "), "")
+    }
+}
+
+final class EmojiCatalogTests: XCTestCase {
+    private let catalog = EmojiCatalog(file: """
+    # comment
+    #group\tSmileys & Emotion
+    😀\tgrinning face\tcheerful face grin happy smile\tחיוך רחב | חיוך | שמח\t
+    😂\tface with tears of joy\tface joy laugh lol tear\tפרצוף צוחק | צחוק | חחח\t
+    #group\tPeople & Body
+    👍\tthumbs up\t+1 good hand like yes\tאגודל למעלה | לייק | סבבה\t👍🏻 👍🏼 👍🏽 👍🏾 👍🏿
+    #group\tFlags
+    🇮🇱\tflag: israel\tflag\tדגל: ישראל\t
+    """)
+
+    func testReadsGroupsAndTones() {
+        XCTAssertEqual(catalog.groups, ["Smileys & Emotion", "People & Body", "Flags"])
+        XCTAssertEqual(catalog.entries(in: 0).map(\.emoji), ["😀", "😂"])
+        XCTAssertEqual(catalog.entries(in: 1).first?.tones.count, 5)
+    }
+
+    func testFindsEmojiInEnglishAndHebrew() {
+        XCTAssertEqual(catalog.search("thumb").map(\.emoji), ["👍"])
+        XCTAssertEqual(catalog.search("face").map(\.emoji), ["😂", "😀"])
+        XCTAssertEqual(catalog.search("israel").map(\.emoji), ["🇮🇱"])
+        XCTAssertEqual(catalog.search("צחוק").map(\.emoji), ["😂"])
+        XCTAssertEqual(catalog.search("happy smile").map(\.emoji), ["😀"])
+        XCTAssertTrue(catalog.search("").isEmpty)
+        XCTAssertTrue(catalog.search("zebra").isEmpty)
+    }
+}
+
+final class ClipboardStorageTests: XCTestCase {
+    /// Storage in memory, the way the iPhone app keeps the history in the Keychain.
+    private final class Memory: ClipboardStorage {
+        var items: [String: Data] = [:]
+        func read(_ name: String) -> Data? { items[name] }
+        func write(_ data: Data, as name: String) { items[name] = data }
+        func remove(_ name: String) { items[name] = nil }
+        func names() -> Set<String> { Set(items.keys) }
+    }
+
+    func testKeepsTheHistoryInAnyStorage() {
+        let memory = Memory()
+        let store = ClipboardStore(storage: memory, maxBytes: 100)
+        store.add([[ClipTypes.plainText: Data("hello".utf8)]], appID: nil, appName: "Lex")
+        XCTAssertNil(store.add([[ClipTypes.plainText: Data(String(repeating: "x", count: 200).utf8)]], appID: nil, appName: nil))
+        let reopened = ClipboardStore(storage: memory)
+        reopened.load()
+        XCTAssertEqual(reopened.items.map(\.text), ["hello"])
+        reopened.remove(reopened.items[0].id)
+        XCTAssertEqual(memory.items.keys.sorted(), ["index.json"])
+    }
+}

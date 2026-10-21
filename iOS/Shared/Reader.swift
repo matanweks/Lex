@@ -13,7 +13,7 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     @Published private(set) var voice = ""
     @Published private(set) var note: String?
 
-    private let client = SpeechClient(cacheDirectory: AppGroup.container.appendingPathComponent("Speech", isDirectory: true))
+    private let client = SpeechClient(cacheDirectory: LocalStore.folder.appendingPathComponent("Speech", isDirectory: true))
     private let synth = AVSpeechSynthesizer()
     private var chunks: [String] = []
     private var audio: [Int: Data] = [:]
@@ -42,7 +42,7 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
 
-        let d = AppGroup.defaults
+        let d = SharedDefaults.standard
         let provider = SpeechProvider(rawValue: d.string(forKey: "speechProvider") ?? "") ?? .system
         let key = provider == .google ? Keychain.read(Keychain.google) ?? "" : provider == .elevenLabs ? Keychain.read(Keychain.elevenLabs) ?? "" : ""
         guard provider != .system, !key.isEmpty else {
@@ -86,7 +86,7 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         }
     }
 
-    private var speed: Double { AppGroup.defaults.object(forKey: "speechSpeed") as? Double ?? 1.0 }
+    private var speed: Double { SharedDefaults.standard.object(forKey: "speechSpeed") as? Double ?? 1.0 }
 
     private func fetch(_ i: Int) {
         guard i < chunks.count, audio[i] == nil, !fetching.contains(i), let template else { return }

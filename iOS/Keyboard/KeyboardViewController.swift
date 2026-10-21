@@ -1,3 +1,4 @@
+import Combine
 import LexCore
 import SwiftUI
 import UIKit
@@ -7,8 +8,11 @@ import UIKit
 /// selection or what's before the cursor, dictates (through the app, see `VoiceLink`), and
 /// types your snippets and what you copied.
 final class KeyboardViewController: UIInputViewController {
-    private let model = KeyboardModel()
-    private let typist = Typist()
+    private let settings = KeyboardSettings()
+    private lazy var model = KeyboardModel(settings: settings)
+    private lazy var typist = Typist(settings: settings)
+    private var height: NSLayoutConstraint?
+    private var watching: Set<AnyCancellable> = []
 
     /// An input view that plays the system's key clicks (when they're on in Settings).
     private final class ClickingInputView: UIInputView, UIInputViewAudioFeedback {
@@ -26,6 +30,10 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Autocorrect and the sentence checks were the keyboard's own settings before the app
+        // could see them.
+        SharedDefaults.moveIn(["autocorrect", "checkSentences"], from: .standard)
+        settings.reload()
         model.controller = self
         typist.controller = self
         model.micLanguage = typist.language.rawValue
@@ -33,8 +41,10 @@ final class KeyboardViewController: UIInputViewController {
         typist.onEmoji = { [weak model] in model?.panel = .emoji }
         typist.canCheck = { [weak model] in model?.hasFullAccess == true && LexEngine.claude.hasKey && model?.isPrivate == false }
         typist.isPrivate = { [weak model] in model?.isPrivate == true }
-        let host = UIHostingController(rootView: KeyboardView(model: model, run: model.run, typist: typist, controller: self))
-        host.view.backgroundColor = .clear
+        let host = UIHostingController(rootView: KeyboardView(model: model, run: model.run, typist: typist, settings: settings, controller: self))
+        // Not quite clear: iOS passes touches on clear parts of a keyboard through to the app
+        // (the gaps between keys, the space beside one-handed keys).
+        host.view.backgroundColor = UIColor(white: 0.5, alpha: 0.02)
         // The keyboard's own area: no safe-area insets pushing content under its top edge.
         host.safeAreaRegions = []
         addChild(host)
@@ -47,15 +57,36 @@ final class KeyboardViewController: UIInputViewController {
             host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         host.didMove(toParent: self)
-        let height = view.heightAnchor.constraint(equalToConstant: 282)
+        let height = view.heightAnchor.constraint(equalToConstant: keyboardHeight)
         height.priority = UILayoutPriority(999)
         height.isActive = true
+        self.height = height
+        // Taller or shorter as the settings change, and while searching emoji.
+        settings.objectWillChange.merge(with: model.objectWillChange).sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateHeight() }
+        }.store(in: &watching)
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // The app's Settings may have changed them.
+        settings.reload()
+        updateHeight()
         model.appeared(fullAccess: hasFullAccess)
         typist.appeared()
+    }
+
+    /// The Lex row and the keys, at the height the settings ask for. Searching emoji adds the
+    /// search field and the results over the keys.
+    private var keyboardHeight: CGFloat {
+        let scale = settings.height.scale
+        let keys = 232 * scale + (settings.numberRow ? 46 * scale : 0)
+        return (50 + keys + (model.emojiQuery != nil ? 84 : 0)).rounded()
+    }
+
+    private func updateHeight() {
+        guard let height, height.constant != keyboardHeight else { return }
+        height.constant = keyboardHeight
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -165,16 +196,56 @@ final class KeyboardViewController: UIInputViewController {
 /// What the keyboard shows and does.
 @MainActor
 final class KeyboardModel: ObservableObject {
-    enum Tab: String, CaseIterable { case lex = "Lex", clipboard = "Clipboard", snippets = "Snippets" }
+    enum Tab: String, CaseIterable { case lex = "Lex", clipboard = "Clipboard", snippets = "Snippets", settings = "Settings" }
     /// What shows in place of the keys: Lex's tools, or emoji.
     enum Panel { case tools, emoji }
-    @Published var panel: Panel?
-    @Published private(set) var recentEmoji = UserDefaults.standard.stringArray(forKey: "recentEmoji") ?? []
+    @Published var panel: Panel? { didSet { if panel != .emoji { emojiQuery = nil; tonesFor = nil } } }
+    let settings: KeyboardSettings
 
-    /// Most recent first, at most 24.
+    init(settings: KeyboardSettings) {
+        self.settings = settings
+    }
+
+    // MARK: Emoji
+
+    /// Every emoji, read from the keyboard's file the first time the panel opens.
+    static let emoji: EmojiCatalog = {
+        guard let url = Bundle.main.url(forResource: "emoji", withExtension: "tsv"), let file = try? String(contentsOf: url, encoding: .utf8) else { return .empty }
+        return EmojiCatalog(file: file)
+    }()
+
+    @Published private(set) var recentEmoji = UserDefaults.standard.stringArray(forKey: "recentEmoji") ?? []
+    /// What you're searching emoji for, typed on the keys under the search field; nil when not searching.
+    @Published var emojiQuery: String?
+    /// The emoji whose skin tones are showing (a long press).
+    @Published var tonesFor: EmojiCatalog.Entry?
+    /// The skin tone you last picked for each emoji, shown in its place.
+    @Published private(set) var tones = UserDefaults.standard.dictionary(forKey: "emojiTones") as? [String: String] ?? [:]
+
+    /// Most recent first, at most 32.
     func usedEmoji(_ emoji: String) {
-        recentEmoji = Array(([emoji] + recentEmoji.filter { $0 != emoji }).prefix(24))
+        recentEmoji = Array(([emoji] + recentEmoji.filter { $0 != emoji }).prefix(32))
         UserDefaults.standard.set(recentEmoji, forKey: "recentEmoji")
+    }
+
+    func pickTone(_ toned: String, of entry: EmojiCatalog.Entry) {
+        tones[entry.emoji] = toned == entry.emoji ? nil : toned
+        UserDefaults.standard.set(tones, forKey: "emojiTones")
+        tonesFor = nil
+    }
+
+    /// The emoji search's keys: they type into the search, not the text field.
+    func searchKey(_ action: KeyAction, typist: Typist) {
+        guard var query = emojiQuery else { return }
+        switch action {
+        case .character(let c): query += c.lowercased()
+        case .space: if !query.isEmpty, !query.hasSuffix(" ") { query += " " }
+        case .delete: if !query.isEmpty { query.removeLast() }
+        case .language: typist.switchLanguage()
+        case .returnKey, .emoji: emojiQuery = nil; return
+        default: return
+        }
+        emojiQuery = query
     }
 
     /// Where an action's text came from, and so where its result goes.
@@ -236,11 +307,10 @@ final class KeyboardModel: ObservableObject {
         // Back from the app that started the mic: pick up where it is.
         voiceChanged()
         // Lets the app's Settings show that the keyboard is set up.
-        AppGroup.defaults.set(Date(), forKey: "keyboardSeen")
+        SharedDefaults.standard.set(Date(), forKey: "keyboardSeen")
         hasKey = LexEngine.claude.hasKey
-        snippets = Prefs.current.snippets
-        saveClipboard()
-        clips = ClipboardLog.store().ordered.filter { $0.kind != .image }.prefix(40).map { $0 }
+        snippets = Prefs.snippets(SharedDefaults.standard)
+        loadClipboard()
     }
 
     /// What an action would work on right now: the selection, or the paragraph before the cursor.
@@ -461,14 +531,21 @@ final class KeyboardModel: ObservableObject {
         }
     }
 
-    /// Saves what's on the clipboard to the history, if it's new (iPhone apps can't watch it).
-    private func saveClipboard() {
-        guard !isPrivate else { return }
+    /// Saves what's on the clipboard to the history if it's new (iPhone apps can't watch it),
+    /// then reads the history. Off the main thread, since it's all in the Keychain.
+    private func loadClipboard() {
+        // Only a new copy is read, so iOS doesn't tell you Lex pasted each time it opens.
         let pasteboard = UIPasteboard.general
-        guard pasteboard.changeCount != ClipboardLog.seenChangeCount, AppGroup.defaults.object(forKey: "clipboardOnOpen") as? Bool ?? true else { return }
-        ClipboardLog.seenChangeCount = pasteboard.changeCount
-        guard pasteboard.hasStrings, ClipPolicy.shouldRecord(types: pasteboard.types, appID: nil, ignoredApps: []),
-              let text = pasteboard.string else { return }
-        ClipboardLog.store().add(ClipboardLog.data(text: text), appID: nil, appName: nil)
+        var copied: String?
+        if !isPrivate, pasteboard.changeCount != ClipboardLog.seenChangeCount, SharedDefaults.standard.object(forKey: "clipboardOnOpen") as? Bool ?? true {
+            ClipboardLog.seenChangeCount = pasteboard.changeCount
+            if pasteboard.hasStrings, ClipPolicy.shouldRecord(types: pasteboard.types, appID: nil, ignoredApps: []) { copied = pasteboard.string }
+        }
+        Task.detached(priority: .userInitiated) { [copied] in
+            let store = ClipboardLog.store()
+            if let copied { store.add(ClipboardLog.data(text: copied), appID: nil, appName: nil) }
+            let clips = Array(store.ordered.filter { $0.kind != .image }.prefix(40))
+            await MainActor.run { [weak self] in self?.clips = clips }
+        }
     }
 }

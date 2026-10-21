@@ -6,13 +6,13 @@ import LexCore
 /// Shortcuts can be tried in the Simulator without an API key. Launching the app with
 /// `-LexStubClaude YES` turns it on and `NO` off; the share sheet and Shortcuts follow.
 final class StubClaude: URLProtocol {
-    static var isOn: Bool { AppGroup.defaults.bool(forKey: "debugStubClaude") }
+    static var isOn: Bool { SharedDefaults.standard.bool(forKey: "debugStubClaude") }
 
     /// Reads the launch argument and shares it with the extensions. A launch without it (iOS
     /// starting Lex for a shortcut) leaves the setting as it was.
     static func configure() {
         guard UserDefaults.standard.object(forKey: "LexStubClaude") != nil else { return }
-        AppGroup.defaults.set(UserDefaults.standard.bool(forKey: "LexStubClaude"), forKey: "debugStubClaude")
+        SharedDefaults.standard.set(UserDefaults.standard.bool(forKey: "LexStubClaude"), forKey: "debugStubClaude")
     }
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "api.anthropic.com" }
@@ -59,6 +59,10 @@ final class StubClaude: URLProtocol {
             // A sentence check: flag "has went", so the keyboard's fix can be tried.
             let sentence = user[start.upperBound..<close.lowerBound]
             return sentence.contains("has went") ? "has went | went | grammar | Wrong verb form" : "OK"
+        }
+        if tag("typed") != nil {
+            // A sentence completion.
+            return "see you there."
         }
         if let transcript = tag("transcript") {
             let tidy = transcript.replacingOccurrences(of: "um ", with: "").trimmingCharacters(in: .whitespaces)

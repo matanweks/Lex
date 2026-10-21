@@ -1,9 +1,11 @@
+import Combine
 import LexCore
 import UIKit
 
 /// Typing on the Lex keyboard: pages, shift, auto-capitals, the suggestion bar (completions
-/// and next-word predictions, learned from what you type), autocorrect, your iOS text
-/// replacements, and Claude's fixes for each sentence you finish.
+/// and next-word predictions from the word lists and what you type), autocorrect, your iOS
+/// text replacements and contacts' names, Claude's fixes for each sentence you finish, and
+/// Claude's guess at the rest of a sentence when you pause.
 @MainActor
 final class Typist: ObservableObject {
     /// One slot in the suggestion bar, which is laid out like Gboard's: the best in the middle.
@@ -32,6 +34,8 @@ final class Typist: ObservableObject {
     @Published private(set) var suggestions: [Suggestion] = []
     @Published private(set) var fixes: [Fix] = []
     @Published private(set) var checking = false
+    /// The rest of the sentence, as Claude guesses it (Smart Compose).
+    @Published private(set) var completion: String?
 
     weak var controller: KeyboardViewController?
     var onLanguage: ((KeyboardLanguage) -> Void)?
@@ -40,9 +44,18 @@ final class Typist: ObservableObject {
     var canCheck: () -> Bool = { false }
     /// Private mode: nothing is learned.
     var isPrivate: () -> Bool = { false }
+    let settings: KeyboardSettings
 
     private let checker = UITextChecker()
     private var replacements: [String: String] = [:]
+    /// Your contacts' names, lowercased → as written.
+    private var names: [String: String] = [:]
+    /// Read when the keyboard opens: the settings are in the Keychain, slower to read per key.
+    private var quickModel = ClaudeModel.haiku
+    private var composeTask: Task<Void, Never>?
+    /// The text Claude's guess follows on from, and the guess.
+    private var compose: (base: String, text: String)?
+    private var lexiconsLoaded: AnyCancellable?
     private var lastShiftTap = Date.distantPast
     private var lastSpaceTap = Date.distantPast
     private var autoShifted = false
@@ -57,16 +70,58 @@ final class Typist: ObservableObject {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("words.json")
     }
 
-    init() {
+    init(settings: KeyboardSettings) {
+        self.settings = settings
         language = KeyboardLanguage(rawValue: UserDefaults.standard.string(forKey: "layoutLanguage") ?? "") ?? .english
         if let data = try? Data(contentsOf: Self.wordsFile), let saved = try? JSONDecoder().decode(WordModel.self, from: data) { words = saved }
+        // The bar shows the word lists' words as soon as they're read.
+        lexiconsLoaded = NotificationCenter.default.publisher(for: Self.lexiconsLoadedNote).receive(on: DispatchQueue.main).sink { [weak self] _ in
+            self?.afterChange()
+        }
+        Self.loadLexicons()
     }
 
     var look: KeyGridView.Look {
         let ret = controller?.returnLook ?? ("return", false)
-        return KeyGridView.Look(rows: KeyboardLayout.rows(page, language),
+        return KeyGridView.Look(rows: KeyboardLayout.rows(page, language, numberRow: settings.numberRow),
                                 shift: page == .letters && language == .english ? shift : .off,
-                                returnLabel: ret.0, returnProminent: ret.1, language: language)
+                                returnLabel: ret.0, returnProminent: ret.1, language: language, numberRow: settings.numberRow)
+    }
+
+    // MARK: Word lists
+
+    /// English and Hebrew, from the files in the keyboard (made by scripts/make-words.py).
+    /// Kept for as long as iOS keeps the keyboard running, since it makes a new one each time.
+    private static var lexicons: [KeyboardLanguage: Lexicon] = [:]
+    private static var loading = false
+    private static let lexiconsLoadedNote = Notification.Name("LexWordListsLoaded")
+
+    private var lexicon: Lexicon { Self.lexicons[language] ?? .empty }
+
+    /// The word list for a word's own script, whichever layout typed it.
+    private func lexicon(for word: String) -> Lexicon {
+        if word.contains(where: { TypingRules.hebrewLetters.contains($0) }) { return Self.lexicons[.hebrew] ?? .empty }
+        if word.contains(where: { $0.isASCII && $0.isLetter }) { return Self.lexicons[.english] ?? .empty }
+        return lexicon
+    }
+
+    private static func loadLexicons() {
+        guard !loading, lexicons.isEmpty else { return }
+        loading = true
+        Task.detached(priority: .userInitiated) {
+            let start = Date()
+            for language in KeyboardLanguage.allCases {
+                guard let words = Bundle.main.url(forResource: language.rawValue, withExtension: "words").flatMap({ try? String(contentsOf: $0, encoding: .utf8) }),
+                      let next = Bundle.main.url(forResource: language.rawValue, withExtension: "next").flatMap({ try? String(contentsOf: $0, encoding: .utf8) })
+                else { continue }
+                let lexicon = Lexicon(wordsFile: words, nextFile: next)
+                await MainActor.run {
+                    lexicons[language] = lexicon
+                    NotificationCenter.default.post(name: lexiconsLoadedNote, object: nil)
+                }
+            }
+            voiceLog.info("word lists read in \(Int(Date().timeIntervalSince(start) * 1000)) ms")
+        }
     }
 
     /// True while the text field is empty: the bar shows Lex's shortcuts instead of words.
@@ -96,11 +151,18 @@ final class Typist: ObservableObject {
         if unsaved >= 15 { saveWords() }
     }
 
-    /// When the keyboard comes up: your text replacements, and digits for number fields.
+    /// When the keyboard comes up: your text replacements and contacts' names, and digits for
+    /// number fields.
     func appeared() {
+        quickModel = Prefs.quickModel
         controller?.requestSupplementaryLexicon { [weak self] lexicon in
+            // iOS lists names (from your contacts and your own card) as entries that type themselves.
+            let isName = { (entry: UILexiconEntry) in entry.userInput.lowercased() == entry.documentText.lowercased() }
+            let replacements = Dictionary(lexicon.entries.filter { !isName($0) }.map { ($0.userInput.lowercased(), $0.documentText) }, uniquingKeysWith: { a, _ in a })
+            let names = Dictionary(lexicon.entries.filter(isName).map { ($0.documentText.lowercased(), $0.documentText) }, uniquingKeysWith: { a, _ in a })
             Task { @MainActor in
-                self?.replacements = Dictionary(lexicon.entries.map { ($0.userInput.lowercased(), $0.documentText) }, uniquingKeysWith: { a, _ in a })
+                self?.replacements = replacements
+                self?.names = names
             }
         }
         if let type = controller?.textDocumentProxy.keyboardType, [.numberPad, .decimalPad, .numbersAndPunctuation, .asciiCapableNumberPad].contains(type) {
@@ -135,6 +197,8 @@ final class Typist: ObservableObject {
                 c.deleteBackward(undo.typed.count)
                 c.type(undo.original)
                 undoCorrection = nil
+                // You meant it: it isn't corrected again.
+                if !isPrivate() { words.keep(undo.original); unsaved += 1 }
             } else {
                 c.deleteBackward()
             }
@@ -154,15 +218,19 @@ final class Typist: ObservableObject {
         case .symbols: page = .symbols
         case .letters: page = .letters
         case .language:
-            language = language.other
-            UserDefaults.standard.set(language.rawValue, forKey: "layoutLanguage")
-            page = .letters
-            onLanguage?(language)
+            switchLanguage()
         case .emoji:
             onEmoji?()
             return
         }
         afterChange()
+    }
+
+    func switchLanguage() {
+        language = language.other
+        UserDefaults.standard.set(language.rawValue, forKey: "layoutLanguage")
+        page = .letters
+        onLanguage?(language)
     }
 
     /// Types text from elsewhere on the keyboard (an emoji), like a key.
@@ -210,7 +278,7 @@ final class Typist: ObservableObject {
         }
         lastSpaceTap = Date()
         let word = TypingRules.currentWord(before)
-        if !word.isEmpty, let fixed = replacements[word.lowercased()] ?? autocorrection(word) {
+        if !word.isEmpty, let fixed = replacements[word.lowercased()] ?? nameForm(word) ?? autocorrection(word) {
             c.deleteBackward(word.count)
             c.type(fixed)
             learnWord(before: c.before)
@@ -243,6 +311,7 @@ final class Typist: ObservableObject {
         }
         suggestions = suggestions(before)
         if let first = fixes.first, !before.contains(first.sentence) { fixes = [] }
+        followCompletion(before)
     }
 
     /// While typing a word: the word as typed, the best completion (middle) and one more.
@@ -263,9 +332,11 @@ final class Typist: ObservableObject {
                 guesses = checker.guesses(forWordRange: range, in: lower, language: lang) ?? []
             }
         }
+        let list = lexicon(for: word.isEmpty ? previous ?? "" : word)
+        if !word.isEmpty, let fix = TypingRules.hebrewCorrection(for: word, lexicon: list) { guesses.insert(fix, at: 0) }
         if !word.isEmpty, let phrase = replacements[word.lowercased()] { guesses.insert(phrase, at: 0) }
         var picks = Predictor.suggestions(prefix: word, previous: previous, atSentenceStart: start, system: system, guesses: guesses,
-                                          model: words, seed: .for(language))
+                                          model: words, seed: .for(language), lexicon: list, names: names)
         if !word.isEmpty, word.first?.isUppercase == true { picks = picks.map { TypingRules.matchCase($0, to: word) } }
         guard !word.isEmpty else {
             // Gboard order: second, best, third.
@@ -281,6 +352,7 @@ final class Typist: ObservableObject {
         let word = TypingRules.currentWord(c.before)
         if suggestion.kind == .keep {
             UITextChecker.learnWord(word)
+            if !isPrivate() { words.keep(word); unsaved += 1 }
         } else {
             c.deleteBackward(word.count)
             c.type(suggestion.text)
@@ -292,23 +364,31 @@ final class Typist: ObservableObject {
         afterChange()
     }
 
+    /// A contact's name typed in lowercase gets its capitals, unless it's also a common word
+    /// ("will", "rose").
+    private func nameForm(_ word: String) -> String? {
+        guard let name = names[word.lowercased()], word == word.lowercased(), name != word, !lexicon(for: word).contains(word) else { return nil }
+        return name
+    }
+
     private func autocorrection(_ word: String) -> String? {
-        guard language == .english, let c = controller, c.correctsText, UserDefaults.standard.object(forKey: "autocorrect") as? Bool ?? true,
-              !UITextChecker.hasLearnedWord(word), words.count(word) < 2,
-              UITextChecker.availableLanguages.contains(language.checkerCode) else { return nil }
+        guard let c = controller, c.correctsText, settings.autocorrect, words.count(word) < 2, names[word.lowercased()] == nil else { return nil }
+        if word.contains(where: { TypingRules.hebrewLetters.contains($0) }) { return TypingRules.hebrewCorrection(for: word, lexicon: lexicon(for: word)) }
+        guard language == .english else { return nil }
+        guard !UITextChecker.hasLearnedWord(word), UITextChecker.availableLanguages.contains(language.checkerCode) else { return nil }
         let lower = word.lowercased()
         let range = NSRange(location: 0, length: (lower as NSString).length)
         guard checker.rangeOfMisspelledWord(in: lower, range: range, startingAt: 0, wrap: false, language: language.checkerCode).location != NSNotFound else { return nil }
         let start = TypingRules.startsSentence(String(c.before.dropLast(word.count)))
         let guesses = checker.guesses(forWordRange: range, in: lower, language: language.checkerCode) ?? []
-        return TypingRules.autocorrection(for: word, guesses: guesses, atSentenceStart: start)
+        return TypingRules.autocorrection(for: word, guesses: guesses, atSentenceStart: start, lexicon: lexicon(for: word))
     }
 
     // MARK: Claude's fixes
 
     /// A sentence just ended: Claude checks it, and its fixes show in the suggestion bar.
     private func sentenceMayHaveEnded() {
-        guard canCheck(), let c = controller, c.correctsText, UserDefaults.standard.object(forKey: "checkSentences") as? Bool ?? true else { return }
+        guard canCheck(), let c = controller, c.correctsText, settings.checkSentences else { return }
         let before = c.before
         guard let sentence = CursorEdit.justFinishedSentence(before), sentence.text != checkedSentence,
               sentence.text.split(whereSeparator: \.isWhitespace).count >= 2 else { return }
@@ -317,7 +397,7 @@ final class Typist: ObservableObject {
         checkTask?.cancel()
         checking = true
         checkTask = Task {
-            let edits = (try? await LexEngine.claude.check(sentence: sentence.text, before: context, finished: true, model: Prefs.current.quickModel)) ?? []
+            let edits = (try? await LexEngine.claude.check(sentence: sentence.text, before: context, finished: true, model: quickModel)) ?? []
             guard !Task.isCancelled else { return }
             checking = false
             fixes = EditMapper.issues(for: edits, sentence: sentence.text, base: 0).map {
@@ -356,4 +436,53 @@ final class Typist: ObservableObject {
     }
 
     func dismissFixes() { fixes = [] }
+
+    // MARK: The rest of the sentence
+
+    /// After a word and a space, a pause asks Claude how the sentence ends. The guess stays
+    /// while what you type matches it.
+    private func followCompletion(_ before: String) {
+        if let guess = compose, before.hasPrefix(guess.base) {
+            let typed = String(before.dropFirst(guess.base.count))
+            if typed.count < guess.text.count, guess.text.hasPrefix(typed) {
+                completion = String(guess.text.dropFirst(typed.count))
+                return
+            }
+        }
+        compose = nil
+        completion = nil
+        composeTask?.cancel()
+        guard wantsCompletion(before) else { return }
+        composeTask = Task {
+            try? await Task.sleep(for: .seconds(0.9))
+            guard !Task.isCancelled, controller?.before == before else { return }
+            let text = (try? await LexEngine.claude.completion(before: String(before.suffix(600)), model: quickModel)) ?? ""
+            guard !Task.isCancelled, !text.isEmpty, controller?.before == before else { return }
+            compose = (before, text)
+            completion = text
+            voiceLog.info("sentence completion: \(text.split(separator: " ").count) words")
+        }
+    }
+
+    /// Right after a space that follows a word, at the end of the text, with a sentence
+    /// under way.
+    private func wantsCompletion(_ before: String) -> Bool {
+        guard settings.completeSentences, canCheck(), let c = controller, c.correctsText, fixes.isEmpty,
+              before.hasSuffix(" "), !before.hasSuffix("  "), let last = before.dropLast().last,
+              last.isLetter || last.isNumber || last == "," || last == "'",
+              (c.textDocumentProxy.documentContextAfterInput ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let sentence = before.split(whereSeparator: { ".!?\n".contains($0) }).last ?? ""
+        return sentence.split(separator: " ").count >= 2
+    }
+
+    func acceptCompletion() {
+        guard let c = controller, let text = completion else { return }
+        compose = nil
+        completion = nil
+        c.type(text)
+        if !(text.last?.isWhitespace ?? true) { c.type(" ") }
+        undoCorrection = nil
+        sentenceMayHaveEnded()
+        afterChange()
+    }
 }

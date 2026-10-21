@@ -90,21 +90,56 @@ public enum ClipPolicy {
     }
 }
 
-/// The clipboard history, newest first, kept on disk: an index plus one file per entry.
+/// Where a clipboard history is kept: an index and one item per entry, by name.
+public protocol ClipboardStorage {
+    func read(_ name: String) -> Data?
+    func write(_ data: Data, as name: String)
+    func remove(_ name: String)
+    /// Every name saved, so entries whose data is gone can be left out.
+    func names() -> Set<String>
+}
+
+/// A folder on disk, readable only by you.
+public struct FolderStorage: ClipboardStorage {
+    public let directory: URL
+
+    public init(_ directory: URL) { self.directory = directory }
+
+    public func read(_ name: String) -> Data? { try? Data(contentsOf: directory.appendingPathComponent(name)) }
+
+    public func write(_ data: Data, as name: String) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        try? data.write(to: directory.appendingPathComponent(name), options: .atomic)
+    }
+
+    public func remove(_ name: String) { try? FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
+
+    public func names() -> Set<String> { Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []) }
+}
+
+/// The clipboard history, newest first: an index plus one saved item per entry.
 public final class ClipboardStore {
     public private(set) var items: [ClipItem] = []
     /// How long unpinned entries are kept.
     public var retention: TimeInterval
     public var maxItems: Int
+    /// Bigger copies aren't kept.
+    public var maxBytes: Int
     /// Text kept in the index for the list and search; the full text is in the entry's file.
     public static let indexTextLimit = 2000
 
-    private let directory: URL?
+    private let storage: ClipboardStorage?
 
-    public init(directory: URL?, retention: TimeInterval = 30 * 86400, maxItems: Int = 1000) {
-        self.directory = directory
+    public convenience init(directory: URL?, retention: TimeInterval = 30 * 86400, maxItems: Int = 1000) {
+        self.init(storage: directory.map(FolderStorage.init), retention: retention, maxItems: maxItems)
+    }
+
+    public init(storage: ClipboardStorage?, retention: TimeInterval = 30 * 86400, maxItems: Int = 1000, maxBytes: Int = ClipPolicy.maxBytes) {
+        self.storage = storage
         self.retention = retention
         self.maxItems = maxItems
+        self.maxBytes = maxBytes
     }
 
     // MARK: Reading
@@ -123,7 +158,7 @@ public final class ClipboardStore {
     }
 
     public func data(for id: UUID) -> ClipData? {
-        guard let url = blobURL(id), let raw = try? Data(contentsOf: url) else { return nil }
+        guard let raw = storage?.read(Self.blobName(id)) else { return nil }
         return try? PropertyListDecoder().decode(ClipData.self, from: raw)
     }
 
@@ -140,7 +175,7 @@ public final class ClipboardStore {
     @discardableResult
     public func add(_ data: ClipData, appID: String?, appName: String?, date: Date = Date()) -> ClipItem? {
         let bytes = data.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.count } }
-        guard bytes <= ClipPolicy.maxBytes, let (kind, text) = ClipPolicy.describe(data) else { return nil }
+        guard bytes <= maxBytes, let (kind, text) = ClipPolicy.describe(data) else { return nil }
         let fingerprint = ClipPolicy.fingerprint(kind, text: text, data: data)
         if let i = items.firstIndex(where: { $0.fingerprint == fingerprint }) {
             var existing = items.remove(at: i)
@@ -153,9 +188,7 @@ public final class ClipboardStore {
         }
         let item = ClipItem(id: UUID(), date: date, kind: kind, text: String(text.prefix(Self.indexTextLimit)),
                             appID: appID, appName: appName, pinned: false, bytes: bytes, fingerprint: fingerprint)
-        if let url = blobURL(item.id), let encoded = try? PropertyListEncoder().encode(data) {
-            try? encoded.write(to: url, options: .atomic)
-        }
+        if let storage, let encoded = try? PropertyListEncoder().encode(data) { storage.write(encoded, as: Self.blobName(item.id)) }
         items.insert(item, at: 0)
         prune(now: date)
         saveIndex()
@@ -170,13 +203,13 @@ public final class ClipboardStore {
 
     public func remove(_ id: UUID) {
         items.removeAll { $0.id == id }
-        if let url = blobURL(id) { try? FileManager.default.removeItem(at: url) }
+        storage?.remove(Self.blobName(id))
         saveIndex()
     }
 
     /// Removes everything except pinned entries.
     public func clear() {
-        for item in items where !item.pinned { if let url = blobURL(item.id) { try? FileManager.default.removeItem(at: url) } }
+        for item in items where !item.pinned { storage?.remove(Self.blobName(item.id)) }
         items.removeAll { !$0.pinned }
         saveIndex()
     }
@@ -190,8 +223,8 @@ public final class ClipboardStore {
             if keep {
                 kept.append(item)
                 if !item.pinned { unpinned += 1 }
-            } else if let url = blobURL(item.id) {
-                try? FileManager.default.removeItem(at: url)
+            } else {
+                storage?.remove(Self.blobName(item.id))
             }
         }
         if kept.count != items.count {
@@ -200,25 +233,21 @@ public final class ClipboardStore {
         }
     }
 
-    // MARK: Disk
+    // MARK: Saving
 
     public func load() {
-        guard let directory, let raw = try? Data(contentsOf: directory.appendingPathComponent("index.json")),
+        guard let storage, let raw = storage.read("index.json"),
               let decoded = try? JSONDecoder().decode([ClipItem].self, from: raw) else { return }
-        // An entry whose file is gone can't be pasted; leave it out.
-        items = decoded.filter { blobURL($0.id).map { FileManager.default.fileExists(atPath: $0.path) } ?? true }
+        // An entry whose data is gone can't be pasted; leave it out.
+        let saved = storage.names()
+        items = decoded.filter { saved.contains(Self.blobName($0.id)) }
         prune()
     }
 
     private func saveIndex() {
-        guard let directory, let encoded = try? JSONEncoder().encode(items) else { return }
-        try? encoded.write(to: directory.appendingPathComponent("index.json"), options: .atomic)
+        guard let storage, let encoded = try? JSONEncoder().encode(items) else { return }
+        storage.write(encoded, as: "index.json")
     }
 
-    private func blobURL(_ id: UUID) -> URL? {
-        guard let directory else { return nil }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
-        return directory.appendingPathComponent("\(id.uuidString).plist")
-    }
+    private static func blobName(_ id: UUID) -> String { "\(id.uuidString).plist" }
 }

@@ -4,13 +4,13 @@ import SwiftUI
 /// What you're writing, kept between launches.
 @MainActor
 final class ComposeModel: ObservableObject {
-    @Published var text: String { didSet { AppGroup.defaults.set(text, forKey: "draft") } }
+    @Published var text: String { didSet { LocalStore.defaults.set(text, forKey: "draft") } }
     @Published var selection: TextSelection?
     /// Test support: an audio file to dictate, set by a `lex://debug` link.
     @Published var dictationFile: URL?
 
     init() {
-        text = AppGroup.defaults.string(forKey: "draft") ?? ""
+        text = LocalStore.defaults.string(forKey: "draft") ?? ""
     }
 
     /// The selected range, when something is selected.

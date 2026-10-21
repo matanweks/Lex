@@ -3,22 +3,18 @@ import LexCore
 import Security
 import SwiftUI
 
-/// What the app, the share sheet and Shortcuts share: settings and the clipboard history live
-/// in the app group, keys in a Keychain group all three can read.
-enum AppGroup {
-    static let id = "group.dev.lex.ios"
+/// Each Lex target's own storage: the app's draft and welcome, the read-aloud cache. What the
+/// targets share (settings, snippets, the clipboard history, keys) is in the Keychain group
+/// instead, since a free developer account can't give them an app group. The name is the app
+/// group Lex used before, so what was saved there is still found and moved over.
+enum LocalStore {
+    static let defaults = UserDefaults(suiteName: "group.dev.lex.ios") ?? .standard
 
-    static let defaults = UserDefaults(suiteName: id) ?? .standard
-
-    /// The shared folder. An unsigned build has no group, so it falls back to the app's own.
-    static var container: URL {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id)
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    }
+    static var folder: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0] }
 }
 
-/// API keys, in the Keychain group named first in the entitlements (so every Lex target sees
-/// them). Readable after the first unlock, so Shortcuts work while the phone is locked.
+/// The Keychain group named in every Lex target's entitlements, so they all see the same items.
+/// Readable after the first unlock, so Shortcuts work while the phone is locked.
 enum Keychain {
     static let service = "dev.lex.app"
     static let anthropic = "anthropic-api-key"
@@ -59,6 +55,19 @@ enum Keychain {
         }
     }
 
+    /// The accounts saved that start with `prefix`.
+    static func accounts(prefix: String) -> Set<String> {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+        return Set(items.compactMap { $0[kSecAttrAccount as String] as? String }.filter { $0.hasPrefix(prefix) })
+    }
+
     static func read(_ account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -88,8 +97,50 @@ enum Keychain {
     }
 }
 
-/// The settings as plain values, read fresh from the app group. Safe on any thread, so
-/// Shortcuts and the share sheet use this rather than `LexSettings`.
+/// Settings every Lex target reads, kept like `UserDefaults` keeps them but in the shared
+/// Keychain group, one item per setting (so two targets saving different settings at once
+/// can't undo each other).
+struct SharedDefaults: Sendable {
+    static let standard = SharedDefaults()
+
+    private func account(_ key: String) -> String { "pref." + key }
+
+    func object(forKey key: String) -> Any? {
+        guard let data = Keychain.readData(account(key)),
+              let list = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [Any] else { return nil }
+        return list.first
+    }
+
+    /// Nil removes the setting.
+    func set(_ value: Any?, forKey key: String) {
+        guard let value else { return Keychain.writeData(nil, account(key)) }
+        Keychain.writeData(try? PropertyListSerialization.data(fromPropertyList: [value], format: .binary, options: 0), account(key))
+    }
+
+    func string(forKey key: String) -> String? { object(forKey: key) as? String }
+    func bool(forKey key: String) -> Bool { object(forKey: key) as? Bool ?? false }
+    func integer(forKey key: String) -> Int { object(forKey: key) as? Int ?? 0 }
+    func data(forKey key: String) -> Data? { object(forKey: key) as? Data }
+    func dictionary(forKey key: String) -> [String: Any]? { object(forKey: key) as? [String: Any] }
+
+    /// Settings this target saved for itself before they were shared, moved in once. A
+    /// setting already shared (saved from another target) wins.
+    static func moveIn(_ keys: [String], from old: UserDefaults) {
+        guard !old.bool(forKey: "movedToKeychain") else { return }
+        for key in keys {
+            if let value = old.object(forKey: key), standard.object(forKey: key) == nil { standard.set(value, forKey: key) }
+        }
+        old.set(true, forKey: "movedToKeychain")
+    }
+
+    /// The app's settings, for `moveIn`.
+    static let appKeys = ["refineModel", "liveModel", "context", "styles", "voiceProfile", "speechProvider", "googleVoice", "speechSpeed",
+                          "dictationLanguage", "dictationPolish", "dictationTranslateHebrew", "dictationWords", "clipboardOnOpen",
+                          "clipboardDays", "snippets"]
+}
+
+/// The settings as plain values, read fresh. Safe on any thread, so Shortcuts and the share
+/// sheet use this rather than `LexSettings`.
 struct Prefs {
     var rewriteModel: ClaudeModel
     var quickModel: ClaudeModel
@@ -102,7 +153,7 @@ struct Prefs {
     var snippets: [Snippet]
 
     static var current: Prefs {
-        let d = AppGroup.defaults
+        let d = SharedDefaults.standard
         let context = WritingContext(rawValue: d.string(forKey: "context") ?? "") ?? .chat
         let styles = d.dictionary(forKey: "styles") as? [String: String] ?? [:]
         let voice = d.string(forKey: "voiceProfile") ?? ""
@@ -119,16 +170,19 @@ struct Prefs {
             snippets: Self.snippets(d))
     }
 
+    /// Just the model for quick work, without reading every setting.
+    static var quickModel: ClaudeModel { ClaudeModel(rawValue: SharedDefaults.standard.string(forKey: "liveModel") ?? "") ?? .haiku }
+
     /// Saved the same way as on the Mac (JSON under "snippets").
-    static func snippets(_ d: UserDefaults) -> [Snippet] {
+    static func snippets(_ d: SharedDefaults) -> [Snippet] {
         d.data(forKey: "snippets").flatMap { try? JSONDecoder().decode([Snippet].self, from: $0) } ?? []
     }
 }
 
-/// The settings screen's view of the same values. Every change is written straight to the
-/// app group, where `Prefs` and the other Lex targets read it.
+/// The settings screen's view of the same values. Every change is saved straight away, where
+/// `Prefs` and the other Lex targets read it.
 final class LexSettings: ObservableObject {
-    private let d = AppGroup.defaults
+    private let d = SharedDefaults.standard
 
     @Published var rewriteModelID: String { didSet { d.set(rewriteModelID, forKey: "refineModel") } }
     @Published var quickModelID: String { didSet { d.set(quickModelID, forKey: "liveModel") } }
@@ -206,7 +260,7 @@ final class LexSettings: ObservableObject {
         keyboardReady = d.object(forKey: "keyboardSeen") != nil
     }
 
-    /// The Lex keyboard has opened with Full Access at least once (it notes that in the app group).
+    /// The Lex keyboard has opened with Full Access at least once (it notes that in the shared settings).
     @Published private(set) var keyboardReady = false
 }
 
@@ -219,5 +273,53 @@ enum Brand {
 
     static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+}
+
+/// The keyboard's settings, like Gboard's. The keyboard's tools and the app's Settings both
+/// change them; the keyboard reads them again each time it opens.
+final class KeyboardSettings: ObservableObject {
+    enum Height: Int, CaseIterable, Identifiable {
+        case extraShort, short, normal, midTall, tall
+        var id: Int { rawValue }
+        var label: String { ["Extra short", "Short", "Normal", "Mid-tall", "Tall"][rawValue] }
+        /// How tall the keys are, compared with normal.
+        var scale: Double { [0.84, 0.92, 1.0, 1.08, 1.16][rawValue] }
+    }
+
+    /// One-handed mode: the keys narrower, against one side.
+    enum Hand: String, CaseIterable { case off, left, right }
+
+    private let d = SharedDefaults.standard
+    private var loading = false
+
+    @Published var autocorrect = true { didSet { save(autocorrect, "autocorrect") } }
+    @Published var checkSentences = true { didSet { save(checkSentences, "checkSentences") } }
+    /// Claude offers the rest of the sentence after a pause (Smart Compose).
+    @Published var completeSentences = true { didSet { save(completeSentences, "completeSentences") } }
+    @Published var numberRow = false { didSet { save(numberRow, "numberRow") } }
+    @Published var height = Height.normal { didSet { save(height.rawValue, "keyboardHeight") } }
+    @Published var sound = true { didSet { save(sound, "keySound") } }
+    @Published var vibration = true { didSet { save(vibration, "keyVibration") } }
+    @Published var hand = Hand.off { didSet { save(hand.rawValue, "oneHanded") } }
+
+    init() { reload() }
+
+    func reload() {
+        loading = true
+        defer { loading = false }
+        autocorrect = d.object(forKey: "autocorrect") as? Bool ?? true
+        checkSentences = d.object(forKey: "checkSentences") as? Bool ?? true
+        completeSentences = d.object(forKey: "completeSentences") as? Bool ?? true
+        numberRow = d.bool(forKey: "numberRow")
+        height = Height(rawValue: d.object(forKey: "keyboardHeight") as? Int ?? Height.normal.rawValue) ?? .normal
+        sound = d.object(forKey: "keySound") as? Bool ?? true
+        vibration = d.object(forKey: "keyVibration") as? Bool ?? true
+        hand = Hand(rawValue: d.string(forKey: "oneHanded") ?? "") ?? .off
+    }
+
+    private func save(_ value: Any, _ key: String) {
+        guard !loading else { return }
+        d.set(value, forKey: key)
     }
 }

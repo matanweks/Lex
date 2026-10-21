@@ -90,6 +90,11 @@ struct SettingsView: View {
             } else {
                 KeyboardSetupSteps()
             }
+            NavigationLink {
+                KeyboardSettingsView()
+            } label: {
+                Label("Keyboard settings", systemImage: "keyboard")
+            }
             Button("Open Settings", systemImage: "gear") { KeyboardSetupSteps.openSettings() }
         } header: {
             Text("Lex keyboard")
@@ -362,5 +367,46 @@ struct WelcomeView: View {
                 content()
             }
         }
+    }
+}
+
+/// The Lex keyboard's settings, like Gboard's. The keyboard reads them the next time it opens
+/// (they're also under ⚙︎ in its tools).
+struct KeyboardSettingsView: View {
+    @StateObject private var settings = KeyboardSettings()
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Autocorrect", isOn: $settings.autocorrect)
+                Toggle("Check each sentence with Claude", isOn: $settings.checkSentences)
+                Toggle("Finish sentences with Claude", isOn: $settings.completeSentences)
+            } header: {
+                Text("Typing")
+            } footer: {
+                Text("When you pause after a word, Claude guesses the rest of the sentence; tap it in the suggestion bar to type it. Your contacts' names come up as suggestions and aren't autocorrected.")
+            }
+            Section("Layout") {
+                Toggle("Number row", isOn: $settings.numberRow)
+                Picker("Keyboard height", selection: $settings.height) {
+                    ForEach(KeyboardSettings.Height.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("One-handed", selection: $settings.hand) {
+                    Text("Off").tag(KeyboardSettings.Hand.off)
+                    Text("Left").tag(KeyboardSettings.Hand.left)
+                    Text("Right").tag(KeyboardSettings.Hand.right)
+                }
+            }
+            Section {
+                Toggle("Sound on keypress", isOn: $settings.sound)
+                Toggle("Vibrate on keypress", isOn: $settings.vibration)
+            } header: {
+                Text("Feedback")
+            } footer: {
+                Text("The sound follows the Ring/Silent switch.")
+            }
+        }
+        .navigationTitle("Keyboard")
+        .onAppear { settings.reload() }
     }
 }

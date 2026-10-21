@@ -34,6 +34,16 @@ public enum Prompts {
         return s
     }
 
+    public static let completeSystem = """
+    You are the sentence autocomplete in a phone keyboard, like Smart Compose. You get the text the user has typed so far, ending where the cursor is (always right after a space). Predict how they will most likely finish the sentence they're in the middle of.
+
+    Answer with only the words that come next: no quotes, no explanation, and nothing they already wrote. At most 8 words, ending where the sentence would end, with its final punctuation if it needs one. Match their language, spelling, tone and casing (chat-style lowercase stays lowercase).
+
+    Only answer when the ending is fairly predictable, like a common phrase or something the earlier text makes clear. Otherwise answer with nothing at all.
+    """
+
+    public static func completeUser(before: String) -> String { "<typed>\(before)</typed>" }
+
     public static let refineSystem = """
     You rewrite text inside a writing assistant. The user picked a piece of their own writing and gave an instruction. Reply with only the rewritten text: no quotes, no preamble, no explanation, no alternatives.
 

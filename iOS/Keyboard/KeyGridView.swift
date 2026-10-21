@@ -1,3 +1,4 @@
+import AudioToolbox
 import LexCore
 import SwiftUI
 import UIKit
@@ -13,6 +14,8 @@ final class KeyGridView: UIView {
         var returnLabel = "return"
         var returnProminent = false
         var language = KeyboardLanguage.english
+        /// With the number row, the letter keys don't show their digits.
+        var numberRow = false
     }
 
     enum Shift: Equatable { case off, on, locked }
@@ -26,6 +29,11 @@ final class KeyGridView: UIView {
     var onCursor: ((Int) -> Void)?
     /// Delete held long enough, or swiped left: remove this many words.
     var onDeleteWords: ((Int) -> Void)?
+    /// Each key press clicks and taps, as the settings say. The keyboard's own clicks need
+    /// Full Access; without it the system's play, when they're on in iOS Settings.
+    var sound = true
+    var vibration = true
+    var ownClicks = false
 
     private struct Press {
         enum Mode { case tap, alternates([String], Int), cursor(Int), deleteWords(Int) }
@@ -116,8 +124,7 @@ final class KeyGridView: UIView {
             guard let i = key(at: point) else { continue }
             presses[touch] = Press(key: i, start: point)
             press(i)
-            UIDevice.current.playInputClick()
-            haptic.impactOccurred(intensity: 0.6)
+            feedback(keys[i].cap.action)
             if keys[i].cap.action == .delete {
                 onKey?(.delete)
                 startRepeating()
@@ -210,6 +217,22 @@ final class KeyGridView: UIView {
             choices.isHidden = true
             if keys[p.key].cap.action == .delete { stopRepeating() }
         }
+    }
+
+    private func feedback(_ action: KeyAction) {
+        if sound {
+            if ownClicks {
+                // The system keyboard's sounds: letters, delete, and the other keys.
+                switch action {
+                case .character, .space: AudioServicesPlaySystemSound(1104)
+                case .delete: AudioServicesPlaySystemSound(1155)
+                default: AudioServicesPlaySystemSound(1156)
+                }
+            } else {
+                UIDevice.current.playInputClick()
+            }
+        }
+        if vibration { haptic.impactOccurred(intensity: 0.6) }
     }
 
     private func press(_ i: Int) {
@@ -308,7 +331,7 @@ private final class KeyView: UIView {
             title = look.shift == .off ? c : c.uppercased()
             label.text = title
             label.font = .systemFont(ofSize: title.count > 1 ? 18 : 23)
-            hint.text = KeyAlternates.hint(for: c, look.language)
+            hint.text = look.numberRow ? nil : KeyAlternates.hint(for: c, look.language)
         case .shift:
             let name = look.shift == .locked ? "capslock.fill" : look.shift == .on ? "shift.fill" : "shift"
             icon.image = UIImage(systemName: name)
@@ -445,6 +468,10 @@ private final class AlternatesPopup: UIView {
 struct KeyGrid: UIViewRepresentable {
     let look: KeyGridView.Look
     let typist: Typist
+    @ObservedObject var settings: KeyboardSettings
+    var ownClicks = false
+    /// Keys that type somewhere else (the emoji search) instead of into the text field.
+    var route: ((KeyAction) -> Void)?
 
     func makeUIView(context: Context) -> KeyGridView {
         let view = KeyGridView()
@@ -458,6 +485,16 @@ struct KeyGrid: UIViewRepresentable {
     }
 
     private func wire(_ view: KeyGridView) {
+        view.sound = settings.sound
+        view.vibration = settings.vibration
+        view.ownClicks = ownClicks
+        if let route {
+            view.onKey = route
+            view.onText = { text in text.forEach { route(.character(String($0))) } }
+            view.onCursor = { _ in }
+            view.onDeleteWords = { count in (0..<count * 4).forEach { _ in route(.delete) } }
+            return
+        }
         view.onKey = { [typist] in typist.press($0) }
         view.onText = { [typist] in typist.typeAlternate($0) }
         view.onCursor = { [typist] in typist.moveCursor(by: $0) }

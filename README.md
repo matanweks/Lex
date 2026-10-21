@@ -153,19 +153,21 @@ Also in the app:
 - **Dictation:** tap the mic, talk, tap Done. Apple's on-device speech hears you in English or Hebrew (switch with **EN**/**עב**), then Claude tidies it as on the Mac, or turns Hebrew into English if you ask.
 - **Clipboard history:** iPhone apps can't watch the clipboard, so Lex saves what's on it each time you open Lex, plus everything Lex copies (from the share sheet and Shortcuts too). iOS asks before Lex reads the clipboard; to stop the question, set Settings › Apps › Lex › Paste from Other Apps to Allow. Search it, pin, swipe to delete, tap to copy.
 - **Read aloud:** the iPhone voice, or Google Chirp 3 HD or ElevenLabs with an API key (there's no gcloud sign-in on iPhone).
-- **Settings:** your Anthropic key (in the Keychain, shared with the share sheet and Shortcuts), models, your style for chat, email or documents, your voice, and dictation options.
+- **Settings:** your Anthropic key, models, your style for chat, email or documents, your voice, dictation options, snippets, and the keyboard's settings. They're kept in a Keychain group the keyboard and the share sheet read too, so all of Lex sees the same key, style, snippets and clipboard history.
 
 ### The Lex keyboard
 
 A full keyboard for English and Hebrew with Lex built in, so you don't have to switch keyboards:
 
 - **Typing:** the iPhone's English layout and Gboard's Hebrew one (**EN**/**עב** switches, and dictation follows; the space bar names the language), numbers and symbols (₪ on the Hebrew page), shift and caps lock (double-tap), and a return key that says Send, Search or Go when the app asks. Keys show the letter above your finger, click and tap like the system keyboard, and follow fast two-thumb typing.
-- **Like Gboard:** hold a top-row key for its number (the small digit in the corner) or any vowel for its accents, and slide to pick one. Slide along the space bar to move the cursor. Hold delete and it speeds up from letters to whole words; swipe left from delete to remove several words at once.
-- **The suggestion bar** works like Gboard's: while you type, the word as typed, the best completion (bold, in the middle) and one more; after a space, the three likeliest next words ("thank" → **you**). Lex learns the words you type and what you write after what, so your names, phrases and Hebrew words come up; that's kept only on the phone (**Forget my words** in the tools clears it). On an empty field the bar shows shortcuts instead: reply to a copied message, the clipboard, snippets and emoji. Your iOS text replacements work as usual.
-- **Autocorrect** fixes clear typos in English when you press space (one letter off, not names, and never a word you type often), and delete right after it puts back what you typed. Typing a sentence's end and a space capitalises the next word, and two spaces type a period.
+- **Like Gboard:** hold a top-row key for its number (the small digit in the corner) or any vowel for its accents, and slide to pick one, or turn on the **number row**. Slide along the space bar to move the cursor. Hold delete and it speeds up from letters to whole words; swipe left from delete to remove several words at once.
+- **The suggestion bar** works like Gboard's: while you type, the word as typed, the best completion (bold, in the middle) and one more; after a space, the three likeliest next words ("thank" → **you**). They come from word lists of 40,000 English and 49,000 Hebrew words with the words that usually follow each one, your contacts' names (as they're written), and what Lex learns from your typing: your names, phrases and words, and what you write after what. That's kept only on the phone (**Forget my words** in the keyboard's settings clears it). On an empty field the bar shows shortcuts instead: reply to a copied message, the clipboard, snippets and emoji. Your iOS text replacements work as usual.
+- **Finish the sentence** (like Gboard's Smart Compose): pause after a word and Claude guesses the rest of the sentence; it shows in the bar, and a tap types it. It stays while what you type matches it.
+- **Autocorrect** fixes clear typos when you press space, in English (one letter off, the commoner word when there are two) and in Hebrew (a final letter typed in its middle form, "שלומ" → **שלום**, or one slip to a neighbouring key). It leaves alone your contacts' names, words you type often, and words in the word lists; delete right after it puts back what you typed, and Lex remembers you meant it. A contact's name typed in lowercase gets its capital. Typing a sentence's end and a space capitalises the next word, and two spaces type a period.
 - **Claude checks each sentence you finish**, like the Mac's checking as you type: its fix shows in the bar ("recieve → receive"); tap it, or **Fix all**. Fields that ask for no autocorrection (codes, usernames) and address fields are left alone.
-- **Emoji:** a page with your recent ones first. For anything else, 🌐 still switches to Apple's emoji keyboard.
-- **The Lex row** over the keys: ✨ opens Lex's tools in place of the keys, 🎙 dictates, and **Autocorrect** and **Check sentences** can be switched off in the tools.
+- **Emoji:** all of them (Unicode's list up to Emoji 17), your recent ones first, then each category; the bar at the bottom jumps to one. Hold an emoji with a small mark for its skin tones, and Lex shows the one you picked from then on. **Search emoji** finds them by name in English or Hebrew ("heart", "לב"), typed on the keys under the search field.
+- **The Lex row** over the keys: ✨ opens Lex's tools in place of the keys, and 🎙 dictates.
+- **Settings**, under ⚙︎ in the tools or in the app's Settings › Keyboard settings, like Gboard's: autocorrect, Claude's sentence checks and sentence endings, the number row, the keyboard's height (five steps), sound and vibration on each key, and **one-handed** mode (the keys narrower, against the left or right; the buttons beside them make it full width again or move it across).
 - **Private mode** (the eye in the tools, like Gboard's incognito): Lex doesn't learn your words, save the clipboard, or send anything to Claude; sentence checks and Lex's actions pause, and the mic transcribes on the phone without the Claude tidy-up. Typing, autocorrect and the suggestions Lex already knows keep working. A dark **Private** badge stays in the Lex row until you turn it off.
 
 Lex's tools:
@@ -175,14 +177,14 @@ Lex's tools:
 - **Copied message:** copy a message you got, switch to Lex in the reply box, and tap **Reply to it** for a drafted reply, or **Summarize it**. **Insert** types the result at the cursor.
 - **Clipboard** and **Snippets** tabs type what you copied, or your saved text, at the cursor. Add snippets in the app under Settings › Snippets.
 
-Turn it on once: Settings › General › Keyboard › Keyboards › Add New Keyboard › Lex, then tap Lex and turn on **Allow Full Access** (it needs network access to reach Claude, and the shared app group for your key, snippets and clipboard). Lex reads the text field only when you tap an action. The app's Settings tab shows when the keyboard is set up.
+Turn it on once: Settings › General › Keyboard › Keyboards › Add New Keyboard › Lex, then tap Lex and turn on **Allow Full Access** (it needs network access to reach Claude, and the shared Keychain group for your key, settings, snippets and clipboard). Lex reads the text field only when you tap an action. The app's Settings tab shows when the keyboard is set up.
 
 What iOS doesn't let a keyboard do:
 - **Use the microphone itself,** hence the trip to the Lex app above. You can also dictate with the regular keyboard's mic key, then switch to Lex and tap **Clean up**.
 - **Keep the keyboard up during Apple's dictation.** Apple's mic shows a full-screen waveform instead with any keyboard but Apple's own.
 - **See the whole text.** iOS shows a keyboard only the last few sentences before the cursor, so that's what Lex works on (the label says how many words). To work on a longer passage, select it first.
 - **Work in password fields,** where iOS always uses its own keyboard. Some apps also block other keyboards.
-- **Use Apple's typing model.** Swipe typing, Apple's predictions and its autocorrect are the system keyboard's own; Lex's autocorrect is simpler, and Claude's sentence checks make up for some of it. Hebrew suggestions come from a built-in list and the words you type (iOS's spelling checker has none for Hebrew), and Hebrew isn't autocorrected.
+- **Use Apple's typing model.** Swipe typing, Apple's predictions and its autocorrect are the system keyboard's own; Lex's autocorrect is simpler, and Claude's sentence checks make up for some of it.
 
 Not on iPhone yet: swipe typing, and syncing settings, snippets or the clipboard with the Mac.
 
@@ -190,12 +192,12 @@ Not on iPhone yet: swipe typing, and syncing settings, snippets or the clipboard
 
 Lex isn't on the App Store; you build it onto your phone with Xcode 26 or later. It needs iOS 26 or later.
 
-1. Open `iOS/Lex.xcodeproj` in Xcode.
-2. Under Signing & Capabilities, pick your team for the **Lex**, **LexShare** and **LexKeyboard** targets. If Xcode says `dev.lex.ios` is taken, change the three bundle IDs and the app group `group.dev.lex.ios` (in all three targets and in `AppGroup.id` in `iOS/Shared/Store.swift`).
-3. Turn on Developer Mode on the iPhone (Settings › Privacy & Security), connect it, choose it as the destination and press Run.
+1. In Xcode › Settings › Accounts, add your Apple Account (a free one is fine).
+2. Turn on Developer Mode on the iPhone (Settings › Privacy & Security), connect it to the Mac and unlock it.
+3. Run `scripts/install-iphone.sh`. It builds Lex, signs it with your team and installs it on the phone. The first time, trust the developer on the phone in Settings › General › VPN & Device Management.
 4. Open Lex, paste your Anthropic API key, and turn on the keyboard as the welcome screen shows.
 
-With a free Apple ID, apps installed this way stop opening after 7 days until you run them from Xcode again. A paid Apple Developer Program team keeps them for a year and adds TestFlight. Building from the command line with a free Personal Team can't register the app group, so build with the entitlements reduced to the Keychain group (`CODE_SIGN_ENTITLEMENTS=<a copy without application-groups>`): your key and the keyboard's mic still work everywhere, but the keyboard and share sheet won't see the app's snippets, style settings or clipboard history.
+With a free Apple ID, apps installed this way stop opening after 7 days: run `scripts/install-iphone.sh` again to renew it (it says until when the install works), and your settings, words and clipboard history stay. A paid Apple Developer Program team keeps them for a year and adds TestFlight. The script uses the team that signed Lex before; `LEX_TEAM=<team ID>` picks another, and `LEX_DEVICE=<identifier>` another phone. If `dev.lex.ios` is taken for your team, change the three bundle IDs in the project (Lex, LexShare, LexKeyboard). You can also open `iOS/Lex.xcodeproj` in Xcode, pick your team under Signing & Capabilities and press Run.
 
 ## Requirements
 
@@ -249,6 +251,7 @@ The setup guide opens on first launch. In detail:
 - **Stored on your Mac:** API keys in the Keychain; settings, snippets, learned words and voice sentences in Lex's preferences; read-aloud audio in the cache; clipboard history in Application Support (never sent anywhere).
 - **Costs:** Claude usage is billed to your API key. Google voices are free for the first 1M characters a month, then $0.03 per 1,000; Google dictation is about $0.016 per minute; Apple dictation and the macOS voice are free. Settings shows this month's voice characters and dictation minutes.
 - **Debug log** (off by default; timings and counts only, never your text): `defaults write dev.lex.app debugLog -bool true`, then see `~/Library/Logs/Lex.log`.
+- **On iPhone:** the Lex keyboard sends Claude each sentence you finish (with the text before it) and, when you pause after a word, the text before the cursor (up to 600 characters) to guess the sentence's end; both can be turned off in its settings, and nothing goes out in private mode or in fields that ask for no autocorrection. Your key, settings, snippets and clipboard history are in a Keychain group only Lex's app, keyboard and share sheet can read; the words Lex learns stay in the keyboard.
 
 ## How edits get into other apps
 
@@ -280,7 +283,7 @@ The setup guide opens on first launch. In detail:
 The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field.
 
 For the iPhone app, build with `xcodebuild -project iOS/Lex.xcodeproj -scheme Lex -destination 'platform=iOS Simulator,name=iPhone 18 Pro' build`, or run it from Xcode. In debug builds:
-- Launching with `-LexStubClaude YES` answers Claude requests with canned text, so the app, the share sheet and Shortcuts can be tried without a key; `-LexStubClaude NO` turns it off again.
+- Launching with `-LexStubClaude YES` answers Claude requests with canned text, so the app, the share sheet, Shortcuts and the keyboard (its sentence checks flag "has went"; its sentence endings are always "see you there.") can be tried without a key; `-LexStubClaude NO` turns it off again.
 - `lex://write?text=…` opens text in the Write tab (in every build); `lex://debug?dictate=<path>` dictates an audio file as if spoken, and `lex://debug?skip-welcome` skips the welcome screen.
 - With the stub on, the keyboard's mic "hears" a fixed sentence instead of opening the microphone, so the whole trip (keyboard, Lex, back, Done) can be run in the Simulator. Its steps are logged under the `dev.lex.ios` subsystem (`log show --info --predicate 'subsystem == "dev.lex.ios"'`), never what was said.
 - The keyboard works in the Simulator once it's added under Settings › General › Keyboard › Keyboards, with Full Access on.
@@ -304,11 +307,16 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Keyboard.swift`: the iPhone keyboard's layouts, its typing rules (auto-capitals, double-space period, autocorrect) and how it makes a fix behind the cursor.
 - `Sources/LexCore/Predictions.swift`: the keyboard's word model (what you type, learned on the phone), the built-in English and Hebrew hints, how suggestions are ranked, long-press alternates, and deleting whole words.
+- `Sources/LexCore/Lexicon.swift`: the keyboard's word lists (how common each word is, and which words follow it), Hebrew autocorrect, the keys around each key, and cleaning up Claude's sentence endings. `Sources/LexCore/Emoji.swift`: the emoji list and its search.
 - `Sources/LexCore/TextTarget.swift`: what the iPhone keyboard works on (the selection, or the text before the cursor) and the spacing it keeps.
-- `Sources/LexCore/Clipboard.swift`: the clipboard history store (index plus one file per entry), what's never kept, and search.
+- `Sources/LexCore/Clipboard.swift`: the clipboard history store (an index plus one item per entry, in a folder on the Mac and in the Keychain group on iPhone), what's never kept, and search.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation, the keyboard's listening session and the Shortcuts actions; `Keyboard/` the Lex keyboard (the key grid, typing and suggestions, Lex's tools and the mic); `Share/` the share-sheet extension; `Shared/` what they all use (settings and keys in the app group and Keychain group, the voice link between the keyboard and the app, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `swift scripts/make-icon.swift ios ink <file>` draws its icon.
+- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation, the keyboard's listening session and the Shortcuts actions; `Keyboard/` the Lex keyboard (the key grid, typing and suggestions, Lex's tools and the mic); `Share/` the share-sheet extension; `Shared/` what they all use (settings, keys and the keyboard's settings in the Keychain group, the voice link between the keyboard and the app, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `Keyboard/Data/` holds the keyboard's word lists and emoji, made by `python3 scripts/make-words.py` and `python3 scripts/make-emoji.py` (they download their sources). `swift scripts/make-icon.swift ios ink <file>` draws its icon.
 - `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, the clipboard history panel, and the brand colours and menu-bar mark.
-- `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
+- `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `install-iphone.sh` (build and install the iPhone app), `make-words.py` and `make-emoji.py` (the keyboard's data), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
 - `Resources/`: `Info.plist` and `AppIcon.icns`.
 - `TestPages/`: browser test fields for the debug commands.
+
+## Credits
+
+The iPhone keyboard's word lists are made from [Tatoeba](https://tatoeba.org)'s English and Hebrew sentences (CC BY 2.0 FR) and, for how common Hebrew words are, Hermit Dave's [FrequencyWords](https://github.com/hermitdave/FrequencyWords) (CC BY-SA 4.0, from OpenSubtitles); `iOS/Keyboard/Data/*.words` and `*.next` are under those licenses. The emoji list and its English and Hebrew names come from Unicode's [emoji data](https://unicode.org/Public/emoji/latest/) and [CLDR](https://cldr.unicode.org) ([Unicode License](https://www.unicode.org/license.txt)).

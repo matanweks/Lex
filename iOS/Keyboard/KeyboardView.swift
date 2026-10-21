@@ -6,6 +6,7 @@ struct KeyboardView: View {
     @ObservedObject var model: KeyboardModel
     @ObservedObject var run: ActionRun
     @ObservedObject var typist: Typist
+    @ObservedObject var settings: KeyboardSettings
     let controller: UIInputViewController
 
     var body: some View {
@@ -21,10 +22,9 @@ struct KeyboardView: View {
                 } else if model.panel == .tools {
                     tools.padding(.horizontal, 6)
                 } else if model.panel == .emoji {
-                    emoji
+                    EmojiPanel(model: model, typist: typist, settings: settings, ownClicks: controller.hasFullAccess)
                 } else {
-                    KeyGrid(look: typist.look, typist: typist)
-                        .accessibilityIdentifier("kb-keys")
+                    keys
                 }
             }
             .frame(maxHeight: .infinity)
@@ -32,6 +32,44 @@ struct KeyboardView: View {
         .padding(.top, 4)
         .padding(.bottom, 2)
         .tint(Brand.indigo)
+    }
+
+    /// The keys, narrower and against one side in one-handed mode, with the way out beside them.
+    @ViewBuilder
+    private var keys: some View {
+        let grid = KeyGrid(look: typist.look, typist: typist, settings: settings, ownClicks: controller.hasFullAccess)
+            .accessibilityIdentifier("kb-keys")
+        if settings.hand == .off {
+            grid
+        } else {
+            GeometryReader { geo in
+                let side = (geo.size.width * 0.2).rounded()
+                // Over the keys' view rather than beside it: the UIKit view's host takes the
+                // touches around it.
+                grid
+                    .frame(width: geo.size.width - side)
+                    .frame(maxWidth: .infinity, alignment: settings.hand == .left ? .leading : .trailing)
+                    .overlay(alignment: settings.hand == .left ? .trailing : .leading) {
+                        handColumn.frame(width: side)
+                    }
+            }
+        }
+    }
+
+    private var handColumn: some View {
+        VStack(spacing: 18) {
+            Button { settings.hand = .off } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 19)).frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel("Full width")
+            Button { settings.hand = settings.hand == .left ? .right : .left } label: {
+                Image(systemName: settings.hand == .left ? "chevron.right" : "chevron.left").font(.system(size: 22, weight: .semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .accessibilityLabel(settings.hand == .left ? "Move the keys right" : "Move the keys left")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: The Lex row
@@ -125,6 +163,23 @@ struct KeyboardView: View {
             }
         } else if let notice = model.notice {
             Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        } else if let completion = typist.completion {
+            // Smart Compose: the rest of the sentence, a tap away.
+            Button { typist.acceptCompletion() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.append").font(.caption.weight(.semibold))
+                    Text(completion).lineLimit(1).truncationMode(.head)
+                }
+                .font(.callout)
+                .foregroundStyle(Brand.indigo)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 32)
+                .background(Capsule().fill(Brand.indigo.opacity(0.12)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Finish the sentence: \(completion)")
+            .accessibilityIdentifier("kb-completion")
         } else if typist.fieldIsEmpty, model.hasFullAccess {
             // Like Gboard's toolbar on an empty field: shortcuts instead of words.
             HStack(spacing: 0) {
@@ -190,13 +245,14 @@ struct KeyboardView: View {
             case .lex: actions
             case .clipboard: clipboard
             case .snippets: snippetList
+            case .settings: keyboardSettings
             }
         }
     }
 
     private var header: some View {
         HStack(spacing: 6) {
-            ForEach(KeyboardModel.Tab.allCases, id: \.self) { tab in
+            ForEach([KeyboardModel.Tab.lex, .clipboard, .snippets], id: \.self) { tab in
                 Button(tab.rawValue) { model.tab = tab }
                     .font(.footnote.weight(.semibold))
                     .padding(.horizontal, 10)
@@ -205,6 +261,17 @@ struct KeyboardView: View {
                     .foregroundStyle(model.tab == tab ? Brand.indigo : .secondary)
                     .buttonStyle(.plain)
             }
+            Button { model.tab = .settings } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 34, height: 28)
+                    .background(Capsule().fill(model.tab == .settings ? Brand.indigo.opacity(0.25) : .clear))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.tab == .settings ? Brand.indigo : .secondary)
+            .accessibilityLabel("Keyboard settings")
+            .accessibilityIdentifier("kb-settings")
             Spacer(minLength: 4)
             if model.canUndo {
                 Button("Undo", systemImage: "arrow.uturn.backward") { model.undo() }
@@ -217,6 +284,7 @@ struct KeyboardView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 34, height: 28)
                     .background(Capsule().fill(model.isPrivate ? Color.primary.opacity(0.18) : .clear))
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .foregroundStyle(model.isPrivate ? .primary : .secondary)
@@ -266,18 +334,65 @@ struct KeyboardView: View {
                     .accessibilityIdentifier("kb-reply")
                 key("Summarize it", "text.append", wide: true) { model.performOnClipboard(.summary) }
             }
-            HStack(spacing: 8) {
-                SettingChip(title: "Autocorrect", key: "autocorrect")
-                SettingChip(title: "Check sentences", key: "checkSentences")
-                Spacer()
-                Button("Forget my words") { typist.forgetWords() }
-                    .font(.caption.weight(.medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
             Spacer(minLength: 0)
         }
         .disabled(!model.hasKey || model.isPrivate)
+    }
+
+    // MARK: Keyboard settings
+
+    private var keyboardSettings: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], spacing: 9) {
+                    SettingToggle(title: "Autocorrect", on: $settings.autocorrect)
+                    SettingToggle(title: "Check sentences", on: $settings.checkSentences)
+                    SettingToggle(title: "Finish sentences", on: $settings.completeSentences)
+                    SettingToggle(title: "Number row", on: $settings.numberRow)
+                    SettingToggle(title: "Sound on keys", on: $settings.sound)
+                    SettingToggle(title: "Vibrate on keys", on: $settings.vibration)
+                }
+                HStack(spacing: 6) {
+                    Text("One-handed").font(.caption.weight(.medium))
+                    Spacer()
+                    ForEach(KeyboardSettings.Hand.allCases, id: \.self) { hand in
+                        choice(hand.rawValue.capitalized, selected: settings.hand == hand) { settings.hand = hand }
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text("Height").font(.caption.weight(.medium))
+                    Spacer()
+                    choice("−", selected: false) { settings.height = .init(rawValue: settings.height.rawValue - 1) ?? settings.height }
+                        .disabled(settings.height == .extraShort)
+                    Text(settings.height.label).font(.caption).monospacedDigit().frame(minWidth: 70)
+                    choice("+", selected: false) { settings.height = .init(rawValue: settings.height.rawValue + 1) ?? settings.height }
+                        .disabled(settings.height == .tall)
+                }
+                HStack {
+                    Button("Forget my words") { typist.forgetWords() }
+                        .font(.caption.weight(.medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                    Spacer()
+                    Text("Also in the Lex app's Settings").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 2)
+        }
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectHidden()
+    }
+
+    private func choice(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .frame(minWidth: 30, minHeight: 26)
+                .background(Capsule().fill(selected ? Brand.indigo.opacity(0.25) : Color.primary.opacity(0.08)))
+                .foregroundStyle(selected ? Brand.indigo : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var yourActions: [LexAction] {
@@ -471,54 +586,6 @@ struct KeyboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Emoji
-
-    private var emoji: some View {
-        VStack(spacing: 6) {
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8), spacing: 4) {
-                    ForEach(emojiList, id: \.self) { e in
-                        Button {
-                            typist.type(e)
-                            model.usedEmoji(e)
-                        } label: {
-                            Text(e).font(.system(size: 30)).frame(maxWidth: .infinity, minHeight: 40)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 6)
-            }
-            .scrollEdgeEffectHidden()
-            HStack(spacing: 6) {
-                Button { model.panel = nil } label: {
-                    Text(typist.language == .english ? "ABC" : "אבג").font(.callout).frame(width: 64, height: 40).background(KeyBackground(dim: true))
-                }
-                .buttonStyle(.plain)
-                Button { typist.press(.space) } label: {
-                    Text("space").font(.callout).frame(maxWidth: .infinity).frame(height: 40).background(KeyBackground())
-                }
-                .buttonStyle(.plain)
-                Button { typist.press(.delete) } label: {
-                    Image(systemName: "delete.left").frame(width: 64, height: 40).background(KeyBackground(dim: true))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Delete")
-            }
-            .padding(.horizontal, 6)
-        }
-    }
-
-    /// Yours first, then the ones people use most.
-    private var emojiList: [String] {
-        model.recentEmoji + Self.popularEmoji.filter { !model.recentEmoji.contains($0) }
-    }
-
-    private static let popularEmoji: [String] = {
-        var seen = Set<String>()
-        return "😂❤️🤣👍😭🙏😘🥰😍😊🎉😁💕🥺😅🔥☺️🤦‍♂️🤷‍♀️🙄😆🤗😉🎂🤔👏🙂😳🥳😎👌💜😔💪✨💖👀😋😏😢👉😩💯🌹💙😃😡💐😜🙈🤞😄🤤🙌🤪😀💋💀👇💔😌🤩🙃😬😱😴🤭😐🌞😒😇🌸😈🎶✌️🎊🥵😞💚☀️🖤💰😚👑🎁💥🙋☹️😑🥴👈✅👋🤢🌟❗😥🌈💛😝😫😲🔴🌻🤯💃👊🏃😕☕🍀💦⭐🦋🤨🌺🤘🌷💝💤🤝🐰😓🍻😟😣🧐😠🤠😻🌙😛🤙🙊".map(String.init).filter { seen.insert($0).inserted }
-    }()
-
     private var fullAccessHelp: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Lex needs Full Access", systemImage: "lock.open").font(.headline)
@@ -532,23 +599,13 @@ struct KeyboardView: View {
     }
 }
 
-/// A setting the keyboard keeps for itself (the app's settings can't reach it without an app group).
-private struct SettingChip: View {
+/// One of the keyboard's settings, switched on and off with a tap.
+private struct SettingToggle: View {
     let title: String
-    let key: String
-    @State private var on: Bool
-
-    init(title: String, key: String) {
-        self.title = title
-        self.key = key
-        _on = State(initialValue: UserDefaults.standard.object(forKey: key) as? Bool ?? true)
-    }
+    @Binding var on: Bool
 
     var body: some View {
-        Button {
-            on.toggle()
-            UserDefaults.standard.set(on, forKey: key)
-        } label: {
+        Button { on.toggle() } label: {
             Label(title, systemImage: on ? "checkmark.circle.fill" : "circle").font(.caption.weight(.medium))
         }
         .buttonStyle(.plain)
@@ -557,7 +614,7 @@ private struct SettingChip: View {
 }
 
 /// A key's rounded background, light like the system's letter keys or dim like its function keys.
-private struct KeyBackground: View {
+struct KeyBackground: View {
     var dim = false
     @Environment(\.colorScheme) private var scheme
 

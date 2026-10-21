@@ -9,12 +9,14 @@ struct LexApp: App {
     @ObservedObject private var voice = VoiceSession.shared
     @State private var showListening = false
     @State private var tab = Tab.write
-    @State private var welcome = !AppGroup.defaults.bool(forKey: "onboarded")
+    @State private var welcome = !LocalStore.defaults.bool(forKey: "onboarded")
     @Environment(\.scenePhase) private var scenePhase
 
     enum Tab { case write, clipboard, settings }
 
     init() {
+        // Settings saved before the keyboard could see them.
+        SharedDefaults.moveIn(SharedDefaults.appKeys, from: LocalStore.defaults)
         #if DEBUG
         StubClaude.configure()
         #endif
@@ -56,7 +58,7 @@ struct LexApp: App {
             }
             .sheet(isPresented: $welcome) {
                 WelcomeView(settings: settings) {
-                    AppGroup.defaults.set(true, forKey: "onboarded")
+                    LocalStore.defaults.set(true, forKey: "onboarded")
                     welcome = false
                 }
                 .interactiveDismissDisabled()
@@ -93,7 +95,7 @@ struct LexApp: App {
                 compose.dictationFile = URL(fileURLWithPath: path)
             }
             if query.contains(where: { $0.name == "skip-welcome" }) {
-                AppGroup.defaults.set(true, forKey: "onboarded")
+                LocalStore.defaults.set(true, forKey: "onboarded")
                 welcome = false
             }
         #endif

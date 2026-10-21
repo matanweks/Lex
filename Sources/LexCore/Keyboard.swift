@@ -52,7 +52,13 @@ public enum KeyboardLanguage: String, CaseIterable, Sendable {
 public enum KeyboardLayout {
     public static let unitsPerRow = 10.0
 
-    public static func rows(_ page: KeyboardPage, _ language: KeyboardLanguage) -> [[KeyCap]] {
+    /// `numberRow` puts the digits over the letters, like Gboard's number row setting.
+    public static func rows(_ page: KeyboardPage, _ language: KeyboardLanguage, numberRow: Bool = false) -> [[KeyCap]] {
+        let rows = baseRows(page, language)
+        return numberRow && page == .letters ? [KeyCap.letters("1234567890")] + rows : rows
+    }
+
+    static func baseRows(_ page: KeyboardPage, _ language: KeyboardLanguage) -> [[KeyCap]] {
         let bottom: [KeyCap] = [
             KeyCap(page == .letters ? .numbers : .letters, page == .letters ? "123" : (language == .english ? "ABC" : "אבג"), width: 1.3),
             KeyCap(.emoji, "😊", width: 1.1),
@@ -130,12 +136,15 @@ public enum TypingRules {
     /// The fix to make when a space ends `word`, or nil: a lowercase word of at least three
     /// letters with a spelling-checker guess one edit away (a typo, not a name or a
     /// different word). At the start of a sentence the first letter may be a capital.
-    /// `guesses` are for the word in lowercase.
-    public static func autocorrection(for word: String, guesses: [String], atSentenceStart: Bool = false) -> String? {
+    /// `guesses` are for the word in lowercase. With a word list, a word it has often is left
+    /// alone (rarer ones can be typos in its sources) and the commonest guess wins.
+    public static func autocorrection(for word: String, guesses: [String], atSentenceStart: Bool = false, lexicon: Lexicon = .empty) -> String? {
         let lower = word.lowercased()
         let capitalizedStart = atSentenceStart && word.first?.isUppercase == true && word.dropFirst().allSatisfy(\.isLowercase)
-        guard word.count >= 3, word == lower || capitalizedStart, lower.allSatisfy(\.isLetter) else { return nil }
-        guard let guess = guesses.first(where: { $0.lowercased() == $0 && $0 != lower && editDistance(lower, $0) == 1 }) else { return nil }
+        guard word.count >= 3, word == lower || capitalizedStart, lower.allSatisfy(\.isLetter), lexicon.count(lower) < 20 else { return nil }
+        let close = guesses.enumerated().filter { $0.element.lowercased() == $0.element && $0.element != lower && editDistance(lower, $0.element) == 1 }
+        // Stable: the checker's order breaks ties.
+        guard let guess = close.max(by: { (lexicon.count($0.element), -$0.offset) < (lexicon.count($1.element), -$1.offset) })?.element else { return nil }
         return capitalizedStart ? matchCase(guess, to: word) : guess
     }
 

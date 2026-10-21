@@ -30,6 +30,14 @@ public struct WordModel: Codable, Equatable, Sendable {
         if words.count > Self.maxWords + Self.maxWords / 10 { prune() }
     }
 
+    /// A word you kept as typed (put back after autocorrect, or tapped as typed): it's yours
+    /// from now on, so it isn't corrected again.
+    public mutating func keep(_ word: String) {
+        let lower = word.lowercased()
+        guard Self.isWord(lower) else { return }
+        words[lower, default: 0] += 2
+    }
+
     /// How `lower` should be shown.
     public func form(of lower: String) -> String { forms[lower] ?? lower }
 
@@ -164,12 +172,13 @@ public struct WordSeed: Sendable {
 // MARK: Suggestions
 
 /// The suggestion bar's words: completions of the word you're typing, or the next word once
-/// you've typed a space. Your own words come first, then the spelling checker's and the
-/// built-in hints.
+/// you've typed a space. Your own words and your contacts' names come first, then the word
+/// list's, the spelling checker's and the built-in hints.
 public enum Predictor {
-    /// Best first.
+    /// Best first. `names` are your contacts' names, lowercased → as written.
     public static func suggestions(prefix: String, previous: String?, atSentenceStart: Bool,
-                                   system: [String], guesses: [String], model: WordModel, seed: WordSeed, limit: Int = 3) -> [String] {
+                                   system: [String], guesses: [String], model: WordModel, seed: WordSeed,
+                                   lexicon: Lexicon = .empty, names: [String: String] = [:], limit: Int = 3) -> [String] {
         var scores: [String: Double] = [:]
         func add(_ word: String, _ score: Double) {
             let lower = word.lowercased()
@@ -177,17 +186,27 @@ public enum Predictor {
             scores[lower, default: 0] += score
         }
         let p = prefix.lowercased()
+        // The sentence start's next words are the ones sentences usually begin with.
+        let after = previous?.lowercased() ?? ""
         if p.isEmpty {
             for (i, (word, count)) in model.next(after: previous).prefix(12).enumerated() { add(word, 4 * log(1 + Double(count)) + 1 - Double(i) * 0.05) }
-            for (i, word) in (seed.next[previous?.lowercased() ?? ""] ?? []).enumerated() { add(word, 3 - Double(i) * 0.3) }
+            for (i, word) in (seed.next[after] ?? []).enumerated() { add(word, 3 - Double(i) * 0.3) }
+            // The word list's sentence starters come from example sentences, not messages: a hint only.
+            let weight = after.isEmpty ? 1.6 : 2.6
+            for (i, word) in (lexicon.next[after] ?? []).enumerated() { add(word, weight - Double(i) * 0.25) }
             if previous == nil || atSentenceStart { for (i, word) in seed.starters.enumerated() { add(word, 2.5 - Double(i) * 0.3) } }
         } else {
             for (word, count) in model.words(startingWith: p) {
                 add(word, 2 * log(1 + Double(count)) + 4 * log(1 + Double(model.count(word, after: previous))))
             }
-            for (i, word) in (seed.next[previous?.lowercased() ?? ""] ?? []).enumerated() where word.lowercased().hasPrefix(p) { add(word, 3 - Double(i) * 0.2) }
+            for (lower, _) in names where lower.hasPrefix(p) { add(lower, 3.2) }
+            for (i, word) in (seed.next[after] ?? []).enumerated() where word.lowercased().hasPrefix(p) { add(word, 3 - Double(i) * 0.2) }
+            for (i, word) in (lexicon.next[after] ?? []).enumerated() where word.hasPrefix(p) { add(word, 2.8 - Double(i) * 0.2) }
+            for (word, _) in lexicon.completions(p, limit: 10) { add(word, 2.6 * lexicon.commonness(word)) }
             for (i, word) in seed.common.enumerated() where word.lowercased().hasPrefix(p) { add(word, 2 * (1 - Double(i) / Double(seed.common.count))) }
-            for (i, word) in system.prefix(8).enumerated() { add(word, 2.5 - Double(i) * 0.15) }
+            // The spelling checker's completions include rare words; the word list ranks better.
+            let systemWeight = lexicon.isEmpty ? 2.5 : 1.4
+            for (i, word) in system.prefix(8).enumerated() { add(word, systemWeight - Double(i) * 0.15) }
             for (i, word) in guesses.prefix(4).enumerated() { add(word, 3.5 - Double(i) * 0.3) }
         }
         // Like Gboard, the bar always has words: after a space with nothing better, the most
@@ -197,7 +216,7 @@ public enum Predictor {
         }
         let best = scores.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(limit).map(\.key)
         return best.map { word in
-            let shown = model.form(of: word) != word ? model.form(of: word) : seedForm(word, seed)
+            let shown = names[word] ?? (model.form(of: word) != word ? model.form(of: word) : seedForm(word, seed))
             return atSentenceStart || prefix.first?.isUppercase == true ? shown.prefix(1).uppercased() + shown.dropFirst() : shown
         }
     }

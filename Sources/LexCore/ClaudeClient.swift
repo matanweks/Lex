@@ -158,6 +158,13 @@ public final class ClaudeClient: @unchecked Sendable {
         return EditLineParser.resolve(edits)
     }
 
+    /// How the sentence being typed likely ends (Smart Compose), or "" without a confident
+    /// guess. `before` is the text up to the cursor.
+    public func completion(before: String, model: ClaudeModel) async throws -> String {
+        let raw = try await streamText(model: model, maxTokens: 40, system: Prompts.completeSystem, user: Prompts.completeUser(before: before)) { _ in }
+        return SentenceCompletion.clean(raw, before: before)
+    }
+
     /// Streams a rewrite. `onText` gets the full text so far after every delta.
     public func refine(text: String, context: String, instruction: String, model: ClaudeModel,
                        style: String = "", voice: String = "", onText: @escaping (String) -> Void) async throws -> String {
