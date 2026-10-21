@@ -180,7 +180,12 @@ public final class GoogleADC: @unchecked Sendable {
     }
 
     public static var defaultFile: URL {
+        #if os(macOS)
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/gcloud/application_default_credentials.json")
+        #else
+        // No gcloud on iPhone: this file never exists, so Google needs an API key there.
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".config/gcloud/application_default_credentials.json")
+        #endif
     }
 
     private let file: URL

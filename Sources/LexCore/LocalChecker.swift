@@ -1,3 +1,4 @@
+#if canImport(AppKit)
 import AppKit
 
 /// macOS's own spelling and grammar checker. Runs in a few milliseconds, offline,
@@ -159,3 +160,4 @@ public enum IssueComposer {
         }
     }
 }
+#endif

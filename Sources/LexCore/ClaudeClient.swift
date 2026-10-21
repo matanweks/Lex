@@ -101,13 +101,15 @@ public final class ClaudeClient: @unchecked Sendable {
     private var lastRequest = Date.distantPast
     private let lock = NSLock()
 
-    public init(apiKey: @escaping () -> String?) {
+    /// `protocolClasses` answer requests in place of the network, for tests.
+    public init(apiKey: @escaping () -> String?, protocolClasses: [AnyClass] = []) {
         self.apiKey = apiKey
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.httpMaximumConnectionsPerHost = 6
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
+        if !protocolClasses.isEmpty { config.protocolClasses = protocolClasses + (config.protocolClasses ?? []) }
         self.session = URLSession(configuration: config)
     }
 

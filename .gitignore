@@ -2,4 +2,6 @@
 build/
 .swiftpm/
 *.xcodeproj
+!iOS/Lex.xcodeproj
+xcuserdata/
 .DS_Store

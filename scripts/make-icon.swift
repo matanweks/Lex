@@ -3,6 +3,7 @@
 //   swift scripts/make-icon.swift sheet out.png          # the concepts side by side
 //   swift scripts/make-icon.swift png <concept> out.png  # one concept at 1024 px
 //   swift scripts/make-icon.swift icns <concept> out.icns
+//   swift scripts/make-icon.swift ios <concept> out.png  # iPhone: square, edge to edge, no alpha
 //
 // Concepts: ink (an "L" with an orange period), correction (a word, a squiggle and the
 // cursor), voice (a pen nib with sound waves).
@@ -17,14 +18,17 @@ func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
 
 let orange = color(0xFF9F0A)
 
+/// iPhone icons are square and edge to edge; iOS rounds the corners itself.
+var fullBleed = false
+
 func squircle() -> CGPath {
-    NSBezierPath(roundedRect: tile, xRadius: 186, yRadius: 186).cgPath
+    fullBleed ? CGPath(rect: tile, transform: nil) : NSBezierPath(roundedRect: tile, xRadius: 186, yRadius: 186).cgPath
 }
 
 /// The tile: drop shadow, vertical gradient, a soft highlight at the top.
 func drawTile(_ ctx: CGContext, top: CGColor, bottom: CGColor, border: CGColor? = nil) {
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -14), blur: 30, color: color(0x000000, 0.32))
+    if !fullBleed { ctx.setShadow(offset: CGSize(width: 0, height: -14), blur: 30, color: color(0x000000, 0.32)) }
     ctx.addPath(squircle())
     ctx.setFillColor(bottom)
     ctx.fillPath()
@@ -181,6 +185,15 @@ case "sheet" where args.count == 3:
     }
     NSGraphicsContext.current = nil
     write(rep, to: args[2])
+case "ios" where args.count == 4:
+    fullBleed = true
+    let ctx = CGContext(data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    // The Mac tile, scaled up to fill the square.
+    ctx.scaleBy(x: canvas / tile.width, y: canvas / tile.height)
+    ctx.translateBy(x: -tile.minX, y: -tile.minY)
+    concept(args[2])(ctx)
+    write(NSBitmapImageRep(cgImage: ctx.makeImage()!), to: args[3])
 case "png" where args.count == 4:
     write(render(concept(args[2]), size: 1024), to: args[3])
 case "icns" where args.count == 4:

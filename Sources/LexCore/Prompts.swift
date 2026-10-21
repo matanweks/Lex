@@ -95,6 +95,12 @@ public struct RefineAction: Identifiable, Equatable, Sendable {
     public let label: String
     public let instruction: String
 
+    public init(id: String, label: String, instruction: String) {
+        self.id = id
+        self.label = label
+        self.instruction = instruction
+    }
+
     public static let improve = RefineAction(id: "improve", label: "Improve", instruction: "Fix any spelling, grammar and punctuation mistakes and smooth out awkward phrasing so it reads naturally. Keep the length and tone about the same.")
     public static let all: [RefineAction] = [
         improve,

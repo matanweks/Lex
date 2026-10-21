@@ -2,7 +2,7 @@
 
 # Lex
 
-A personal Grammarly for macOS that works in every app. It checks what you type as you type, refines a sentence the moment you finish it, and translates, summarizes, reads aloud and takes dictation, all from the keyboard.
+A personal Grammarly for macOS that works in every app. It checks what you type as you type, refines a sentence the moment you finish it, and translates, summarizes, reads aloud and takes dictation, all from the keyboard. There's an [iPhone app](#lex-on-iphone) too.
 
 ## Install
 
@@ -138,12 +138,42 @@ A capitalised name or term (Pelles, AppFab) that the spell checker flags but Cla
 - **Per-app style:** Settings › Your style holds how text should read in chat apps (Slack, WhatsApp, Messages…), email (Mail, Outlook, Superhuman…), documents (Notion, Pages, Word…) and everything else. Refine, tone fixes and the dictation tidy-up follow the style for the app you're in. Chat, email and documents start with defaults you can edit.
 - **Your voice (optional):** turn on "Collect sentences I write" and Lex keeps sentences you typed that Claude found nothing to fix (on this Mac, at most 40). After 8, **Build my voice** turns them into a short description of how you write: sentence length, formality, greetings, habits. Refine, tone fixes and drafted replies then sound like you. You can also write or edit the description yourself, switch it off, or clear everything.
 
+## Lex on iPhone
+
+iPhone apps can't read or edit text in other apps the way Lex does on the Mac, so on iPhone Lex reaches your text three ways:
+
+| Where | What you do |
+|---|---|
+| **The Lex app** | Write, paste or dictate, then tap **Lex** to fix, improve, translate, shorten, summarize, draft a reply or check how it sounds. Select part of the text to work on just that; **Replace** puts a rewrite back. |
+| **The share sheet** | In any app, select text, tap **Share**, then **Lex**. Same actions; **Copy** the result and paste it where it belongs. |
+| **Shortcuts** | **Fix My Clipboard**, **Translate My Clipboard** and **Summarize My Clipboard**, plus **Run a Lex Action** for your own shortcuts. Put one on the Action button or Back Tap. |
+
+Also in the app:
+- **Dictation:** tap the mic, talk, tap Done. Apple's on-device speech hears you in English or Hebrew (switch with **EN**/**עב**), then Claude tidies it as on the Mac, or turns Hebrew into English if you ask.
+- **Clipboard history:** iPhone apps can't watch the clipboard, so Lex saves what's on it each time you open Lex, plus everything Lex copies (from the share sheet and Shortcuts too). iOS asks before Lex reads the clipboard; to stop the question, set Settings › Apps › Lex › Paste from Other Apps to Allow. Search it, pin, swipe to delete, tap to copy.
+- **Read aloud:** the iPhone voice, or Google Chirp 3 HD or ElevenLabs with an API key (there's no gcloud sign-in on iPhone).
+- **Settings:** your Anthropic key (in the Keychain, shared with the share sheet and Shortcuts), models, your style for chat, email or documents, your voice, and dictation options.
+
+Not on iPhone yet: a Lex keyboard for using Lex while you type in other apps, checking as you type, and syncing settings or the clipboard with the Mac.
+
+### Install on your iPhone
+
+Lex isn't on the App Store; you build it onto your phone with Xcode 26 or later. It needs iOS 26 or later.
+
+1. Open `iOS/Lex.xcodeproj` in Xcode.
+2. Under Signing & Capabilities, pick your team for both the **Lex** and **LexShare** targets. If Xcode says `dev.lex.ios` is taken, change both bundle IDs and the app group `group.dev.lex.ios` (in both targets and in `AppGroup.id` in `iOS/Shared/Store.swift`).
+3. Turn on Developer Mode on the iPhone (Settings › Privacy & Security), connect it, choose it as the destination and press Run.
+4. Open Lex and paste your Anthropic API key.
+
+With a free Apple ID, apps installed this way stop opening after 7 days until you run them from Xcode again. A paid Apple Developer Program team keeps them for a year and adds TestFlight.
+
 ## Requirements
 
 - macOS 14 or later. Apple's on-device dictation and live words need macOS 26; on older systems dictation uses Google.
 - An Anthropic API key.
 - Optional: a Google Cloud project for the Google voices and Hebrew dictation, or an ElevenLabs key.
 - To build: Xcode or Command Line Tools 26 or later (the macOS 26 SDK, for Apple's speech recognizer).
+- iPhone app: iOS 26 or later, built with Xcode 26 or later.
 
 ## Build from source
 
@@ -219,6 +249,11 @@ The setup guide opens on first launch. In detail:
 
 The field commands only act on TextEdit, or on text that starts with `LEXTEST`; the pages in `TestPages/` provide such fields for browsers. `compare-rects` logs every positioning method side by side for the current field.
 
+For the iPhone app, build with `xcodebuild -project iOS/Lex.xcodeproj -scheme Lex -destination 'platform=iOS Simulator,name=iPhone 18 Pro' build`, or run it from Xcode. In debug builds:
+- Launching with `-LexStubClaude YES` answers Claude requests with canned text, so the app, the share sheet and Shortcuts can be tried without a key; `-LexStubClaude NO` turns it off again.
+- `lex://write?text=…` opens text in the Write tab (in every build); `lex://debug?dictate=<path>` dictates an audio file as if spoken, and `lex://debug?skip-welcome` skips the welcome screen.
+- Apple's speech models don't run in the Simulator, so dictation needs a real iPhone. On the iOS 26.5 Simulator, Shortcuts couldn't start Lex's actions ("couldn't find AppShortcutsProvider"); on iOS 27 they work.
+
 Measured on 2026-10-19 and 2026-10-20:
 
 | | First underline or word | Full answer |
@@ -237,6 +272,7 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
 - `Sources/LexCore/Clipboard.swift`: the clipboard history store (index plus one file per entry), what's never kept, and search.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
+- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation and the Shortcuts actions; `Share/` the share-sheet extension; `Shared/` what both use (settings and keys in the app group and Keychain group, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `swift scripts/make-icon.swift ios ink <file>` draws its icon.
 - `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, the clipboard history panel, and the brand colours and menu-bar mark.
 - `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
 - `Resources/`: `Info.plist` and `AppIcon.icns`.
