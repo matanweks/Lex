@@ -70,7 +70,7 @@ final class LiveTranscriber {
     private let (chunks, feeder) = AsyncStream<[Int16]>.makeStream()
     private var task: Task<String, Error>?
     /// The words so far (settled plus still-changing), on the main thread.
-    var onText: ((String) -> Void)?
+    var onText: (@MainActor @Sendable (String) -> Void)?
 
     enum Failure: LocalizedError {
         case unsupported(String)
@@ -81,7 +81,8 @@ final class LiveTranscriber {
 
     func start(language: String) {
         let chunks = self.chunks
-        task = Task { [weak self] in
+        let onText = self.onText
+        task = Task {
             let module = try await Self.module(for: language)
             if let install = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
                 try await install.downloadAndInstall()
@@ -96,7 +97,7 @@ final class LiveTranscriber {
                 func heard(_ text: String, final: Bool) async {
                     if final { settled += text }
                     let shown = (final ? settled : settled + text).trimmingCharacters(in: .whitespacesAndNewlines)
-                    await MainActor.run { self?.onText?(shown) }
+                    await onText?(shown)
                 }
                 if let english = module as? SpeechTranscriber {
                     for try await result in english.results { await heard(String(result.text.characters), final: result.isFinal) }
