@@ -54,6 +54,12 @@ final class StubClaude: URLProtocol {
             guard let open = user.range(of: "<\(name)>"), let close = user.range(of: "</\(name)>", range: open.upperBound..<user.endIndex) else { return nil }
             return String(user[open.upperBound..<close.lowerBound])
         }
+        if let open = user.range(of: "<sentence"), let start = user.range(of: ">", range: open.upperBound..<user.endIndex),
+           let close = user.range(of: "</sentence>", range: start.upperBound..<user.endIndex) {
+            // A sentence check: flag "has went", so the keyboard's fix can be tried.
+            let sentence = user[start.upperBound..<close.lowerBound]
+            return sentence.contains("has went") ? "has went | went | grammar | Wrong verb form" : "OK"
+        }
         if let transcript = tag("transcript") {
             let tidy = transcript.replacingOccurrences(of: "um ", with: "").trimmingCharacters(in: .whitespaces)
             return tidy.prefix(1).uppercased() + tidy.dropFirst() + (tidy.hasSuffix(".") ? "" : ".")

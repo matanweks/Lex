@@ -5,33 +5,158 @@ import UIKit
 struct KeyboardView: View {
     @ObservedObject var model: KeyboardModel
     @ObservedObject var run: ActionRun
+    @ObservedObject var typist: Typist
     let controller: UIInputViewController
 
     var body: some View {
-        VStack(spacing: 6) {
-            if !model.hasFullAccess {
-                fullAccessHelp
-            } else if model.mic != .off {
-                listening
-            } else if run.action != nil {
-                result
-            } else {
-                header
-                switch model.tab {
-                case .lex: actions
-                case .clipboard: clipboard
-                case .snippets: snippetList
+        VStack(spacing: 4) {
+            topBar
+                .frame(height: 40)
+                .padding(.horizontal, 6)
+            Group {
+                if model.mic != .off {
+                    listening.padding(.horizontal, 6)
+                } else if run.action != nil {
+                    result.padding(.horizontal, 6)
+                } else if model.panel == .tools {
+                    tools.padding(.horizontal, 6)
+                } else if model.panel == .emoji {
+                    emoji
+                } else {
+                    KeyGrid(look: typist.look) { typist.press($0) }
+                        .accessibilityIdentifier("kb-keys")
                 }
             }
-            bottomRow
+            .frame(maxHeight: .infinity)
         }
-        .padding(.horizontal, 5)
-        .padding(.top, 6)
-        .padding(.bottom, 3)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
         .tint(Brand.indigo)
     }
 
-    // MARK: Top
+    // MARK: The Lex row
+
+    /// Over the keys: Lex's tools, the suggestions (or Claude's fixes), and the mic. Over a
+    /// panel: the way back to the keys.
+    @ViewBuilder
+    private var topBar: some View {
+        if model.panel != nil || model.mic != .off || run.action != nil {
+            HStack(spacing: 8) {
+                barButton("keyboard", label: "Back to the keys") {
+                    if model.mic != .off { model.cancelMic() }
+                    if run.action != nil { model.close() }
+                    model.panel = nil
+                }
+                if model.panel == .tools, model.mic == .off, run.action == nil {
+                    header
+                } else {
+                    Text(model.panel == .emoji ? "Emoji" : "Lex").font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                if controller.needsInputModeSwitchKey {
+                    GlobeKey(controller: controller).frame(width: 38, height: 34)
+                }
+                barButton(model.hasFullAccess ? "sparkles" : "lock", label: "Lex tools", tint: Brand.indigo) { model.panel = .tools }
+                    .accessibilityIdentifier("kb-lex")
+                strip
+                    .frame(maxWidth: .infinity)
+                barButton("mic.fill", label: "Dictate") { model.micTapped() }
+                    .disabled(!model.hasFullAccess)
+                    .accessibilityIdentifier("kb-mic")
+            }
+        }
+    }
+
+    /// Claude's fixes when it found some, otherwise the word suggestions.
+    @ViewBuilder
+    private var strip: some View {
+        if let fix = typist.fixes.first {
+            HStack(spacing: 6) {
+                Button { typist.apply([fix]) } label: {
+                    HStack(spacing: 4) {
+                        Text(fix.original).strikethrough().foregroundStyle(.secondary)
+                        Image(systemName: "arrow.right").font(.caption2)
+                        Text(fix.replacement.isEmpty ? "remove" : fix.replacement).fontWeight(.semibold)
+                    }
+                    .lineLimit(1)
+                    .font(.callout)
+                    .padding(.horizontal, 10)
+                    .frame(height: 32)
+                    .background(Capsule().fill(Brand.indigo.opacity(0.16)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("kb-fix")
+                if typist.fixes.count > 1 {
+                    Button("Fix all \(typist.fixes.count)") { typist.apply(typist.fixes) }
+                        .font(.callout.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Brand.indigo)
+                }
+                Spacer(minLength: 0)
+                Button { typist.dismissFixes() } label: { Image(systemName: "xmark").font(.caption) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+        } else if model.canUndo {
+            HStack {
+                Button("Undo", systemImage: "arrow.uturn.backward") { model.undo() }
+                    .font(.callout.weight(.semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Brand.indigo)
+                Spacer()
+            }
+        } else if let notice = model.notice {
+            Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        } else {
+            HStack(spacing: 0) {
+                ForEach(Array(typist.suggestions.enumerated()), id: \.element) { i, suggestion in
+                    if i > 0 { Divider().frame(height: 22) }
+                    Button { typist.choose(suggestion) } label: {
+                        Text(suggestion.kind == .keep ? "“\(suggestion.text)”" : suggestion.text)
+                            .font(.system(size: 17, weight: suggestion.kind == .correct && i == 1 ? .semibold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if typist.suggestions.isEmpty, typist.checking {
+                    Text("Checking…").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    private func barButton(_ symbol: String, label: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: Lex's tools
+
+    @ViewBuilder
+    private var tools: some View {
+        if !model.hasFullAccess {
+            fullAccessHelp
+        } else {
+            switch model.tab {
+            case .lex: actions
+            case .clipboard: clipboard
+            case .snippets: snippetList
+            }
+        }
+    }
 
     private var header: some View {
         HStack(spacing: 6) {
@@ -89,6 +214,11 @@ struct KeyboardView: View {
                 key("Reply to it", "arrowshape.turn.up.left", wide: true) { model.performOnClipboard(.reply) }
                     .accessibilityIdentifier("kb-reply")
                 key("Summarize it", "text.append", wide: true) { model.performOnClipboard(.summary) }
+            }
+            HStack(spacing: 8) {
+                SettingChip(title: "Autocorrect", key: "autocorrect")
+                SettingChip(title: "Check sentences", key: "checkSentences")
+                Spacer()
             }
             Spacer(minLength: 0)
         }
@@ -286,53 +416,53 @@ struct KeyboardView: View {
         .buttonStyle(.plain)
     }
 
-    private var bottomRow: some View {
-        HStack(spacing: 6) {
-            if controller.needsInputModeSwitchKey {
-                GlobeKey(controller: controller)
-                    .frame(width: 44, height: 42)
-                    .background(KeyBackground(dim: true))
-            }
-            Button { model.micTapped() } label: {
-                Image(systemName: model.mic == .listening ? "stop.fill" : "mic.fill")
-                    .foregroundStyle(model.mic == .listening ? .white : .primary)
-                    .frame(width: 48, height: 42)
-                    .background {
-                        if model.mic == .listening {
-                            RoundedRectangle(cornerRadius: 8).fill(Brand.orange)
-                        } else {
-                            KeyBackground(dim: true)
+    // MARK: Emoji
+
+    private var emoji: some View {
+        VStack(spacing: 6) {
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8), spacing: 4) {
+                    ForEach(emojiList, id: \.self) { e in
+                        Button {
+                            typist.type(e)
+                            model.usedEmoji(e)
+                        } label: {
+                            Text(e).font(.system(size: 30)).frame(maxWidth: .infinity, minHeight: 40)
                         }
+                        .buttonStyle(.plain)
                     }
+                }
+                .padding(.horizontal, 6)
             }
-            .buttonStyle(.plain)
-            .disabled(!model.hasFullAccess || model.mic == .finishing)
-            .accessibilityLabel(model.mic == .listening ? "Stop dictating" : "Dictate")
-            .accessibilityIdentifier("kb-mic")
-            Button { model.micLanguage = model.micLanguage == "he" ? "en" : "he" } label: {
-                Text(model.micLanguage == "he" ? "עב" : "EN")
-                    .font(.footnote.weight(.semibold))
-                    .frame(width: 40, height: 42)
-                    .background(KeyBackground(dim: true))
+            .scrollEdgeEffectHidden()
+            HStack(spacing: 6) {
+                Button { model.panel = nil } label: {
+                    Text(typist.language == .english ? "ABC" : "אבג").font(.callout).frame(width: 64, height: 40).background(KeyBackground(dim: true))
+                }
+                .buttonStyle(.plain)
+                Button { typist.press(.space) } label: {
+                    Text("space").font(.callout).frame(maxWidth: .infinity).frame(height: 40).background(KeyBackground())
+                }
+                .buttonStyle(.plain)
+                Button { typist.press(.delete) } label: {
+                    Image(systemName: "delete.left").frame(width: 64, height: 40).background(KeyBackground(dim: true))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dictation language")
-            Button { model.key(" ") } label: {
-                Text("space").font(.callout).frame(maxWidth: .infinity).frame(height: 42).background(KeyBackground())
-            }
-            .buttonStyle(.plain)
-            Button { model.key(nil) } label: {
-                Image(systemName: "delete.left").frame(width: 52, height: 42).background(KeyBackground(dim: true))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete")
-            Button { model.key("\n") } label: {
-                Image(systemName: "return").frame(width: 52, height: 42).background(KeyBackground(dim: true))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Return")
+            .padding(.horizontal, 6)
         }
     }
+
+    /// Yours first, then the ones people use most.
+    private var emojiList: [String] {
+        model.recentEmoji + Self.popularEmoji.filter { !model.recentEmoji.contains($0) }
+    }
+
+    private static let popularEmoji: [String] = {
+        var seen = Set<String>()
+        return "😂❤️🤣👍😭🙏😘🥰😍😊🎉😁💕🥺😅🔥☺️🤦‍♂️🤷‍♀️🙄😆🤗😉🎂🤔👏🙂😳🥳😎👌💜😔💪✨💖👀😋😏😢👉😩💯🌹💙😃😡💐😜🙈🤞😄🤤🙌🤪😀💋💀👇💔😌🤩🙃😬😱😴🤭😐🌞😒😇🌸😈🎶✌️🎊🥵😞💚☀️🖤💰😚👑🎁💥🙋☹️😑🥴👈✅👋🤢🌟❗😥🌈💛😝😫😲🔴🌻🤯💃👊🏃😕☕🍀💦⭐🦋🤨🌺🤘🌷💝💤🤝🐰😓🍻😟😣🧐😠🤠😻🌙😛🤙🙊".map(String.init).filter { seen.insert($0).inserted }
+    }()
 
     private var fullAccessHelp: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -344,6 +474,30 @@ struct KeyboardView: View {
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// A setting the keyboard keeps for itself (the app's settings can't reach it without an app group).
+private struct SettingChip: View {
+    let title: String
+    let key: String
+    @State private var on: Bool
+
+    init(title: String, key: String) {
+        self.title = title
+        self.key = key
+        _on = State(initialValue: UserDefaults.standard.object(forKey: key) as? Bool ?? true)
+    }
+
+    var body: some View {
+        Button {
+            on.toggle()
+            UserDefaults.standard.set(on, forKey: key)
+        } label: {
+            Label(title, systemImage: on ? "checkmark.circle.fill" : "circle").font(.caption.weight(.medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(on ? Brand.indigo : .secondary)
     }
 }
 

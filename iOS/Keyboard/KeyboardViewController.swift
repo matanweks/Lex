@@ -2,17 +2,32 @@ import LexCore
 import SwiftUI
 import UIKit
 
-/// The Lex keyboard. You switch to it with 🌐 when you want help with what you wrote: it
-/// fixes, rewrites or translates the selection, or the paragraph before the cursor, and puts
-/// the result back in place. It also dictates (through the app, see `VoiceLink`), types your
-/// snippets and what you copied, and drafts a reply to a message you copied.
+/// The Lex keyboard: a full English and Hebrew keyboard (see `Typist`) with Lex built in.
+/// Claude checks each sentence you finish; the Lex row fixes, rewrites or translates the
+/// selection or what's before the cursor, dictates (through the app, see `VoiceLink`), and
+/// types your snippets and what you copied.
 final class KeyboardViewController: UIInputViewController {
     private let model = KeyboardModel()
+    private let typist = Typist()
+
+    /// An input view that plays the system's key clicks (when they're on in Settings).
+    private final class ClickingInputView: UIInputView, UIInputViewAudioFeedback {
+        var enableInputClicksWhenVisible: Bool { true }
+    }
+
+    override func loadView() {
+        inputView = ClickingInputView(frame: .zero, inputViewStyle: .keyboard)
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         model.controller = self
-        let host = UIHostingController(rootView: KeyboardView(model: model, run: model.run, controller: self))
+        typist.controller = self
+        model.micLanguage = typist.language.rawValue
+        typist.onLanguage = { [weak model] language in model?.micLanguage = language.rawValue }
+        typist.onEmoji = { [weak model] in model?.panel = .emoji }
+        typist.canCheck = { [weak model] in model?.hasFullAccess == true && LexEngine.claude.hasKey }
+        let host = UIHostingController(rootView: KeyboardView(model: model, run: model.run, typist: typist, controller: self))
         host.view.backgroundColor = .clear
         // The keyboard's own area: no safe-area insets pushing content under its top edge.
         host.safeAreaRegions = []
@@ -26,7 +41,7 @@ final class KeyboardViewController: UIInputViewController {
             host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         host.didMove(toParent: self)
-        let height = view.heightAnchor.constraint(equalToConstant: 300)
+        let height = view.heightAnchor.constraint(equalToConstant: 282)
         height.priority = .defaultHigh
         height.isActive = true
     }
@@ -34,6 +49,7 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         model.appeared(fullAccess: hasFullAccess)
+        typist.appeared()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -41,19 +57,77 @@ final class KeyboardViewController: UIInputViewController {
         model.disappeared()
     }
 
-    override func textDidChange(_ textInput: UITextInput?) { model.refresh() }
-    override func selectionDidChange(_ textInput: UITextInput?) { model.refresh() }
+    override func textDidChange(_ textInput: UITextInput?) {
+        model.refresh()
+        typist.afterChange()
+    }
+
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        model.refresh()
+        typist.afterChange()
+    }
 
     // MARK: The field, through the text proxy
 
     var selected: String? { textDocumentProxy.selectedText }
-    var before: String { textDocumentProxy.documentContextBeforeInput ?? "" }
 
-    func type(_ text: String) { textDocumentProxy.insertText(text) }
+    /// What's before the cursor. Some apps (Messages) report it a moment after the keyboard
+    /// types, so until they catch up this is the keyboard's own account of what it typed.
+    var before: String {
+        let reported = textDocumentProxy.documentContextBeforeInput ?? ""
+        if let stale = reportedAtLastEdit, reported == stale { return typedBefore }
+        reportedAtLastEdit = nil
+        typedBefore = reported
+        return reported
+    }
+
+    private var typedBefore = ""
+    /// What the app reported right after the keyboard's last edit; it changes once it catches up.
+    private var reportedAtLastEdit: String?
+
+    private func edited(_ expected: String) {
+        if reportedAtLastEdit == nil { reportedAtLastEdit = textDocumentProxy.documentContextBeforeInput ?? "" }
+        typedBefore = expected
+        if (textDocumentProxy.documentContextBeforeInput ?? "") == expected { reportedAtLastEdit = nil }
+    }
+
+    func type(_ text: String) {
+        let current = before
+        textDocumentProxy.insertText(text)
+        edited(current + text)
+    }
+
+    /// Fields that ask for no autocorrection (codes, usernames) or hold addresses get no
+    /// suggestions, autocorrect or Claude checks.
+    var correctsText: Bool {
+        let proxy = textDocumentProxy
+        if proxy.autocorrectionType == .no || proxy.spellCheckingType == .no { return false }
+        return ![UIKeyboardType.URL, .emailAddress, .twitter, .webSearch].contains(proxy.keyboardType ?? .default)
+    }
+
+    var autocapitalizes: Bool { textDocumentProxy.autocapitalizationType != UITextAutocapitalizationType.none }
+
+    /// The return key's label, and whether it's the blue action key.
+    var returnLook: (String, Bool) {
+        switch textDocumentProxy.returnKeyType ?? .default {
+        case .go: return ("go", true)
+        case .google, .search, .yahoo: return ("search", true)
+        case .send: return ("send", true)
+        case .done: return ("done", true)
+        case .join: return ("join", true)
+        case .route: return ("route", true)
+        case .next: return ("next", false)
+        case .continue: return ("continue", false)
+        case .emergencyCall: return ("SOS", true)
+        default: return ("return", false)
+        }
+    }
 
     /// Deletes `count` characters before the cursor, one at a time (a keyboard can't select).
     func deleteBackward(_ count: Int = 1) {
+        let current = before
         for _ in 0..<count { textDocumentProxy.deleteBackward() }
+        edited(String(current.dropLast(count)))
     }
 
     /// Opens the Lex app. Keyboards have no API for that, so this asks the app object at the
@@ -77,6 +151,16 @@ final class KeyboardViewController: UIInputViewController {
 @MainActor
 final class KeyboardModel: ObservableObject {
     enum Tab: String, CaseIterable { case lex = "Lex", clipboard = "Clipboard", snippets = "Snippets" }
+    /// What shows in place of the keys: Lex's tools, or emoji.
+    enum Panel { case tools, emoji }
+    @Published var panel: Panel?
+    @Published private(set) var recentEmoji = UserDefaults.standard.stringArray(forKey: "recentEmoji") ?? []
+
+    /// Most recent first, at most 24.
+    func usedEmoji(_ emoji: String) {
+        recentEmoji = Array(([emoji] + recentEmoji.filter { $0 != emoji }).prefix(24))
+        UserDefaults.standard.set(recentEmoji, forKey: "recentEmoji")
+    }
 
     /// Where an action's text came from, and so where its result goes.
     enum Source { case selection, beforeCursor, clipboard }

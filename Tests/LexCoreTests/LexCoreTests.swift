@@ -703,3 +703,61 @@ final class TextTargetTests: XCTestCase {
         XCTAssertEqual(t.original.count, 11)
     }
 }
+
+final class KeyboardTypingTests: XCTestCase {
+    func testRowsAddUpToTheKeyboardWidth() {
+        for page in [KeyboardPage.letters, .numbers, .symbols] {
+            for language in KeyboardLanguage.allCases {
+                for row in KeyboardLayout.rows(page, language) {
+                    XCTAssertLessThanOrEqual(row.reduce(0) { $0 + $1.width }, KeyboardLayout.unitsPerRow + 0.001, "\(page) \(language)")
+                }
+            }
+        }
+        XCTAssertEqual(KeyboardLayout.rows(.letters, .hebrew)[1].map(\.label).joined(), "שדגכעיחלךף")
+        XCTAssertTrue(KeyboardLayout.rows(.numbers, .hebrew)[1].map(\.label).contains("₪"))
+    }
+
+    func testCapitalizesAtTheStartOfASentence() {
+        XCTAssertTrue(TypingRules.startsSentence(""))
+        XCTAssertTrue(TypingRules.startsSentence("Done. "))
+        XCTAssertTrue(TypingRules.startsSentence("Really?  "))
+        XCTAssertTrue(TypingRules.startsSentence("Hi,\n"))
+        XCTAssertFalse(TypingRules.startsSentence("Hi, "))
+        XCTAssertFalse(TypingRules.startsSentence("Hi"))
+    }
+
+    func testDoubleSpaceAfterAWordMakesAPeriod() {
+        XCTAssertTrue(TypingRules.doubleSpaceMakesPeriod("see you "))
+        XCTAssertFalse(TypingRules.doubleSpaceMakesPeriod("see you. "))
+        XCTAssertFalse(TypingRules.doubleSpaceMakesPeriod("see you  "))
+        XCTAssertFalse(TypingRules.doubleSpaceMakesPeriod(" "))
+    }
+
+    func testAutocorrectsOnlyTyposOfLowercaseWords() {
+        XCTAssertEqual(TypingRules.autocorrection(for: "teh", guesses: ["the", "ten"]), "the")
+        XCTAssertEqual(TypingRules.autocorrection(for: "recieve", guesses: ["receive"]), "receive")
+        XCTAssertNil(TypingRules.autocorrection(for: "Matan", guesses: ["satan"]))
+        XCTAssertEqual(TypingRules.autocorrection(for: "Teh", guesses: ["the"], atSentenceStart: true), "The")
+        XCTAssertNil(TypingRules.autocorrection(for: "Teh", guesses: ["the"]))
+        XCTAssertNil(TypingRules.autocorrection(for: "on", guesses: ["in"]))
+        XCTAssertNil(TypingRules.autocorrection(for: "tomorow", guesses: ["tomorrows"]))
+        XCTAssertEqual(TypingRules.currentWord("I can't"), "can't")
+        XCTAssertEqual(TypingRules.matchCase("receive", to: "Recieve"), "Receive")
+    }
+
+    func testFixesEarlierTextByRetypingFromIt() {
+        let before = "Their going home. "
+        let plan = CursorEdit.plan(replacing: NSRange(location: 0, length: 5), original: "Their", with: "They're", in: before)
+        XCTAssertEqual(plan?.delete, before.count)
+        XCTAssertEqual(plan?.type, "They're going home. ")
+        XCTAssertNil(CursorEdit.plan(replacing: NSRange(location: 0, length: 5), original: "There", with: "They're", in: before))
+        let both = CursorEdit.plan([
+            TextFix(range: NSRange(location: 6, length: 3), original: "has", replacement: "have"),
+            TextFix(range: NSRange(location: 0, length: 5), original: "Their", replacement: "They"),
+        ], in: "Their has gone. ")
+        XCTAssertEqual(both?.delete, 16)
+        XCTAssertEqual(both?.type, "They have gone. ")
+        XCTAssertEqual(CursorEdit.justFinishedSentence("Hi there. I has went home. ")?.text, "I has went home.")
+        XCTAssertNil(CursorEdit.justFinishedSentence("I has went home"))
+    }
+}
