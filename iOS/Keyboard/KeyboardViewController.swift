@@ -31,7 +31,8 @@ final class KeyboardViewController: UIInputViewController {
         model.micLanguage = typist.language.rawValue
         typist.onLanguage = { [weak model] language in model?.micLanguage = language.rawValue }
         typist.onEmoji = { [weak model] in model?.panel = .emoji }
-        typist.canCheck = { [weak model] in model?.hasFullAccess == true && LexEngine.claude.hasKey }
+        typist.canCheck = { [weak model] in model?.hasFullAccess == true && LexEngine.claude.hasKey && model?.isPrivate == false }
+        typist.isPrivate = { [weak model] in model?.isPrivate == true }
         let host = UIHostingController(rootView: KeyboardView(model: model, run: model.run, typist: typist, controller: self))
         host.view.backgroundColor = .clear
         // The keyboard's own area: no safe-area insets pushing content under its top edge.
@@ -192,6 +193,15 @@ final class KeyboardModel: ObservableObject {
     @Published private(set) var hasFullAccess = false
     @Published private(set) var hasKey = false
     @Published private(set) var canUndo = false
+    /// Private mode: Lex doesn't learn your words, save the clipboard, or send anything to
+    /// Claude. Typing, autocorrect and the suggestions it already knows still work.
+    @Published private(set) var isPrivate = UserDefaults.standard.bool(forKey: "privateMode")
+
+    func togglePrivate() {
+        isPrivate.toggle()
+        UserDefaults.standard.set(isPrivate, forKey: "privateMode")
+        show(isPrivate ? "Private mode is on" : "Private mode is off")
+    }
 
     /// The keyboard's mic: opening Lex to start it, listening, or finishing the text.
     enum Mic { case off, opening, listening, finishing }
@@ -248,6 +258,7 @@ final class KeyboardModel: ObservableObject {
     }
 
     func perform(_ action: LexAction) {
+        guard !isPrivate else { return show("Private mode is on: Lex isn't sending anything.") }
         refresh()
         guard let target else { return show("Select text, or put the cursor after what you wrote.") }
         start(action, on: target)
@@ -256,6 +267,7 @@ final class KeyboardModel: ObservableObject {
     /// Works on the message on the clipboard (say, one you're replying to); the result is
     /// typed at the cursor.
     func performOnClipboard(_ action: LexAction) {
+        guard !isPrivate else { return show("Private mode is on: Lex isn't sending anything.") }
         guard let copied = UIPasteboard.general.string, let text = TextTarget(copied) else {
             return show("Copy the message first, then tap this.")
         }
@@ -369,7 +381,8 @@ final class KeyboardModel: ObservableObject {
 
     private func startMic() {
         guard let controller else { return }
-        let request = VoiceLink.Request(language: micLanguage, before: String(controller.before.suffix(300)))
+        let request = VoiceLink.Request(language: micLanguage, before: isPrivate ? "" : String(controller.before.suffix(300)),
+                                        privately: isPrivate ? true : nil)
         VoiceLink.request = request
         micRequest = request.id
         micText = ""
@@ -450,6 +463,7 @@ final class KeyboardModel: ObservableObject {
 
     /// Saves what's on the clipboard to the history, if it's new (iPhone apps can't watch it).
     private func saveClipboard() {
+        guard !isPrivate else { return }
         let pasteboard = UIPasteboard.general
         guard pasteboard.changeCount != ClipboardLog.seenChangeCount, AppGroup.defaults.object(forKey: "clipboardOnOpen") as? Bool ?? true else { return }
         ClipboardLog.seenChangeCount = pasteboard.changeCount

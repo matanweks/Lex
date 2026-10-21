@@ -38,6 +38,8 @@ final class Typist: ObservableObject {
     var onEmoji: (() -> Void)?
     /// Claude can be asked (Full Access and a key).
     var canCheck: () -> Bool = { false }
+    /// Private mode: nothing is learned.
+    var isPrivate: () -> Bool = { false }
 
     private let checker = UITextChecker()
     private var replacements: [String: String] = [:]
@@ -85,7 +87,7 @@ final class Typist: ObservableObject {
 
     /// Learns the word right before the cursor as a finished word (a space or punctuation follows).
     private func learnWord(before text: String) {
-        guard controller?.correctsText == true else { return }
+        guard controller?.correctsText == true, !isPrivate() else { return }
         let word = TypingRules.currentWord(text)
         guard !word.isEmpty else { return }
         let start = TypingRules.startsSentence(String(text.dropLast(word.count)))

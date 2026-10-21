@@ -59,8 +59,23 @@ struct KeyboardView: View {
                 if controller.needsInputModeSwitchKey {
                     GlobeKey(controller: controller).frame(width: 38, height: 34)
                 }
-                barButton(model.hasFullAccess ? "sparkles" : "lock", label: "Lex tools", tint: Brand.indigo) { model.panel = .tools }
+                if model.isPrivate {
+                    // Always in sight while private mode is on, like Gboard's incognito badge.
+                    Button { model.panel = .tools } label: {
+                        Label("Private", systemImage: "eye.slash.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .frame(height: 30)
+                            .background(Capsule().fill(Color(white: 0.18)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Private mode is on. Lex tools")
                     .accessibilityIdentifier("kb-lex")
+                } else {
+                    barButton(model.hasFullAccess ? "sparkles" : "lock", label: "Lex tools", tint: Brand.indigo) { model.panel = .tools }
+                        .accessibilityIdentifier("kb-lex")
+                }
                 strip
                     .frame(maxWidth: .infinity)
                 barButton("mic.fill", label: "Dictate") { model.micTapped() }
@@ -197,10 +212,16 @@ struct KeyboardView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(Brand.indigo)
             }
-            Text(model.notice ?? targetLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Button { model.togglePrivate() } label: {
+                Image(systemName: model.isPrivate ? "eye.slash.fill" : "eye.slash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 34, height: 28)
+                    .background(Capsule().fill(model.isPrivate ? Color.primary.opacity(0.18) : .clear))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.isPrivate ? .primary : .secondary)
+            .accessibilityLabel(model.isPrivate ? "Turn private mode off" : "Turn private mode on")
+            .accessibilityIdentifier("kb-private")
         }
         .frame(height: 28)
     }
@@ -215,7 +236,16 @@ struct KeyboardView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if !model.hasKey {
+            if model.isPrivate {
+                Label("Private mode: Lex doesn't learn, save or send what you type.", systemImage: "eye.slash")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if model.hasKey {
+                Text(model.notice ?? targetLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
                 Text("Open the Lex app and add your Anthropic API key.")
                     .font(.callout)
                     .foregroundStyle(.orange)
@@ -247,7 +277,7 @@ struct KeyboardView: View {
             }
             Spacer(minLength: 0)
         }
-        .disabled(!model.hasKey)
+        .disabled(!model.hasKey || model.isPrivate)
     }
 
     private var yourActions: [LexAction] {

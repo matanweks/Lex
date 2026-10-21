@@ -3,14 +3,17 @@ import LexCore
 import SwiftUI
 
 /// The app's side of the keyboard's mic. The keyboard opens Lex (lex://listen) to start the
-/// microphone, which iOS only allows while Lex is in front. Lex then keeps it running in the
-/// background for a few minutes, so the next dictations start straight from the keyboard.
+/// microphone, which iOS only allows while Lex is in front, and Lex keeps it running in the
+/// background while you dictate. It lets go of the mic a few seconds after you finish, as
+/// soon as iOS says the phone is locked, on a phone call, and after two minutes of listening.
 /// Audio is kept only between the keyboard's start and stop.
 @MainActor
 final class VoiceSession: ObservableObject {
     static let shared = VoiceSession()
-    /// How long the mic stays ready after the last dictation.
-    static let keepReady: TimeInterval = 5 * 60
+    /// How long the mic stays open after a dictation, for a quick follow-up one.
+    static let keepReady: TimeInterval = 5
+    /// The longest dictation: then Lex types what it heard and lets go of the mic.
+    static let longest: TimeInterval = 120
 
     @Published private(set) var isOn = false
     @Published private(set) var listening = false
@@ -23,6 +26,8 @@ final class VoiceSession: ObservableObject {
     private var request: VoiceLink.Request?
     private var listener: VoiceLink.Listener?
     private var idleTask: Task<Void, Never>?
+    private var limitTask: Task<Void, Never>?
+    private var guards: [NSObjectProtocol] = []
     private var lastWrite = Date.distantPast
     #if DEBUG
     /// The running microphone is what keeps Lex awake in the background; with no microphone
@@ -61,13 +66,32 @@ final class VoiceSession: ObservableObject {
         #if DEBUG
         if Self.simulated, keepAwake == nil { keepAwake = Self.silentEngine() }
         #endif
+        if !isOn { watchForLockAndCalls() }
         isOn = true
         startListening()
+    }
+
+    /// The mic closes when the phone locks (iOS tells apps when its protected data goes away,
+    /// within seconds of locking) and when a call or another app takes the audio.
+    private func watchForLockAndCalls() {
+        let center = NotificationCenter.default
+        guards = [
+            center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { _ in
+                Task { @MainActor in VoiceSession.shared.end() }
+            },
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { note in
+                let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
+                if began { Task { @MainActor in VoiceSession.shared.end() } }
+            },
+        ]
     }
 
     /// Lets go of the mic.
     func end() {
         guard isOn else { return }
+        for observer in guards { NotificationCenter.default.removeObserver(observer) }
+        guards = []
+        limitTask?.cancel()
         idleTask?.cancel()
         transcriber?.cancel()
         transcriber = nil
@@ -107,6 +131,13 @@ final class VoiceSession: ObservableObject {
         liveText = ""
         listening = true
         write(.listening)
+        limitTask?.cancel()
+        let id = request.id
+        limitTask = Task {
+            try? await Task.sleep(for: .seconds(Self.longest))
+            guard !Task.isCancelled, self.request?.id == id else { return }
+            await self.finish()
+        }
     }
 
     private func heard(_ text: String) {
@@ -119,6 +150,7 @@ final class VoiceSession: ObservableObject {
 
     private func finish() async {
         guard listening, let live = transcriber, let request else { return }
+        limitTask?.cancel()
         listening = false
         recorder.collecting = false
         feed.current = nil
@@ -137,7 +169,7 @@ final class VoiceSession: ObservableObject {
             write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
             return keepReadyThenStop()
         }
-        let text = await DictationTidy.finish(raw, before: request.before)
+        let text = await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
         voiceLog.info("app finished: \(raw.count) chars heard, \(text.count) typed")
         write(.done, text: text)
         keepReadyThenStop()
@@ -145,6 +177,7 @@ final class VoiceSession: ObservableObject {
 
     private func cancel() {
         guard listening else { return }
+        limitTask?.cancel()
         listening = false
         recorder.collecting = false
         feed.current = nil
@@ -244,7 +277,7 @@ struct ListeningView: View {
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
             }
             Spacer()
-            Text("The mic stays ready for 5 minutes after you finish, so the next time Lex won't need to open. iOS shows the orange dot meanwhile.")
+            Text("Lex turns the mic off a few seconds after you finish, and right away when you lock the phone.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

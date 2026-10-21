@@ -26,6 +26,8 @@ enum VoiceLink {
         var language: String
         /// The text before the cursor, so the tidy-up continues it naturally.
         var before: String
+        /// The keyboard is in private mode: transcribe on the phone, nothing to Claude.
+        var privately: Bool? = nil
     }
 
     enum Signal: String, CaseIterable {

@@ -206,13 +206,14 @@ final class LiveTranscriber {
 /// What happens to a transcript before it's typed, in the app and for the keyboard's mic.
 enum DictationTidy {
     /// A snippet's name types the snippet; otherwise Claude tidies (or translates) the words
-    /// when there's something to tidy. `onPolishing` runs before Claude is asked.
+    /// when there's something to tidy, unless `useClaude` is off (the keyboard's private
+    /// mode). `onPolishing` runs before Claude is asked.
     @MainActor
-    static func finish(_ raw: String, before: String, onPolishing: () -> Void = {}) async -> String {
+    static func finish(_ raw: String, before: String, useClaude: Bool = true, onPolishing: () -> Void = {}) async -> String {
         let prefs = Prefs.current
         if let snippet = Snippets.spokenMatch(raw, in: prefs.snippets) { return snippet.text }
         let translateTo = prefs.dictationTranslateHebrew && SpeechText.language(of: raw) == "he" ? "English" : nil
-        guard LexEngine.claude.hasKey, translateTo != nil || (prefs.dictationPolish && DictationText.needsTidy(raw)) else { return raw }
+        guard useClaude, LexEngine.claude.hasKey, translateTo != nil || (prefs.dictationPolish && DictationText.needsTidy(raw)) else { return raw }
         onPolishing()
         let cleaned = try? await LexEngine.claude.cleanDictation(raw, app: "", before: before, words: prefs.dictationWords,
                                                                 model: prefs.quickModel, style: prefs.style, voice: prefs.voice,
