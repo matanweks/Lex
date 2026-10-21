@@ -160,6 +160,7 @@ Also in the app:
 It's a tools keyboard rather than a typing one: you type with your usual keyboard and switch to Lex (🌐) when you want help.
 
 - **Your text:** Fix mistakes, Improve, Translate (Hebrew ↔ English), Clean up (for text dictated with the keyboard's mic), Shorter, Friendlier, Formal and Better tone. Lex works on the selection, or on what's before the cursor, shows the result, and **Replace** puts it in place of the original. **Undo** puts the original back.
+- **Dictate:** tap 🎙 on the Lex keyboard and talk; the words show as you speak, and **Done** types them, tidied by Claude, at the cursor. **EN**/**עב** picks English or Hebrew. iOS doesn't let keyboards use the microphone, so the first tap opens the Lex app for a moment to start it: tap ◀ at the top left to go back, and keep talking. Lex then keeps the mic ready in the background for 5 minutes (iOS shows the orange dot), so the next taps start right away. Audio is kept only between your tap and Done, and Lex can stop the mic from its banner.
 - **Copied message:** copy a message you got, switch to Lex in the reply box, and tap **Reply to it** for a drafted reply, or **Summarize it**. **Insert** types the result at the cursor.
 - **Clipboard** and **Snippets** tabs type what you copied, or your saved text, at the cursor. Add snippets in the app under Settings › Snippets.
 - Space, delete and return keys, so you don't have to switch back for small edits.
@@ -167,7 +168,8 @@ It's a tools keyboard rather than a typing one: you type with your usual keyboar
 Turn it on once: Settings › General › Keyboard › Keyboards › Add New Keyboard › Lex, then tap Lex and turn on **Allow Full Access** (it needs network access to reach Claude, and the shared app group for your key, snippets and clipboard). Lex reads the text field only when you tap an action. The app's Settings tab shows when the keyboard is set up.
 
 What iOS doesn't let a keyboard do:
-- **Use the microphone.** Dictate with the regular keyboard's mic key, then switch to Lex and tap **Clean up**.
+- **Use the microphone itself,** hence the trip to the Lex app above. You can also dictate with the regular keyboard's mic key, then switch to Lex and tap **Clean up**.
+- **Keep the keyboard up during Apple's dictation.** Apple's mic shows a full-screen waveform instead with any keyboard but Apple's own.
 - **See the whole text.** iOS shows a keyboard only the last few sentences before the cursor, so that's what Lex works on (the label says how many words). To work on a longer passage, select it first.
 - **Work in password fields,** where iOS always uses its own keyboard. Some apps also block other keyboards.
 
@@ -182,7 +184,7 @@ Lex isn't on the App Store; you build it onto your phone with Xcode 26 or later.
 3. Turn on Developer Mode on the iPhone (Settings › Privacy & Security), connect it, choose it as the destination and press Run.
 4. Open Lex, paste your Anthropic API key, and turn on the keyboard as the welcome screen shows.
 
-With a free Apple ID, apps installed this way stop opening after 7 days until you run them from Xcode again. A paid Apple Developer Program team keeps them for a year and adds TestFlight.
+With a free Apple ID, apps installed this way stop opening after 7 days until you run them from Xcode again. A paid Apple Developer Program team keeps them for a year and adds TestFlight. Building from the command line with a free Personal Team can't register the app group, so build with the entitlements reduced to the Keychain group (`CODE_SIGN_ENTITLEMENTS=<a copy without application-groups>`): your key and the keyboard's mic still work everywhere, but the keyboard and share sheet won't see the app's snippets, style settings or clipboard history.
 
 ## Requirements
 
@@ -269,6 +271,7 @@ The field commands only act on TextEdit, or on text that starts with `LEXTEST`; 
 For the iPhone app, build with `xcodebuild -project iOS/Lex.xcodeproj -scheme Lex -destination 'platform=iOS Simulator,name=iPhone 18 Pro' build`, or run it from Xcode. In debug builds:
 - Launching with `-LexStubClaude YES` answers Claude requests with canned text, so the app, the share sheet and Shortcuts can be tried without a key; `-LexStubClaude NO` turns it off again.
 - `lex://write?text=…` opens text in the Write tab (in every build); `lex://debug?dictate=<path>` dictates an audio file as if spoken, and `lex://debug?skip-welcome` skips the welcome screen.
+- With the stub on, the keyboard's mic "hears" a fixed sentence instead of opening the microphone, so the whole trip (keyboard, Lex, back, Done) can be run in the Simulator. Its steps are logged under the `dev.lex.ios` subsystem (`log show --info --predicate 'subsystem == "dev.lex.ios"'`), never what was said.
 - The keyboard works in the Simulator once it's added under Settings › General › Keyboard › Keyboards, with Full Access on.
 - Apple's speech models don't run in the Simulator, so dictation needs a real iPhone. On the iOS 26.5 Simulator, Shortcuts couldn't start Lex's actions ("couldn't find AppShortcutsProvider"); on iOS 27 they work.
 
@@ -291,7 +294,7 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore/TextTarget.swift`: what the iPhone keyboard works on (the selection, or the text before the cursor) and the spacing it keeps.
 - `Sources/LexCore/Clipboard.swift`: the clipboard history store (index plus one file per entry), what's never kept, and search.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation and the Shortcuts actions; `Keyboard/` the Lex keyboard; `Share/` the share-sheet extension; `Shared/` what both use (settings and keys in the app group and Keychain group, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `swift scripts/make-icon.swift ios ink <file>` draws its icon.
+- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation, the keyboard's listening session and the Shortcuts actions; `Keyboard/` the Lex keyboard; `Share/` the share-sheet extension; `Shared/` what they all use (settings and keys in the app group and Keychain group, the voice link between the keyboard and the app, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `swift scripts/make-icon.swift ios ink <file>` draws its icon.
 - `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, the clipboard history panel, and the brand colours and menu-bar mark.
 - `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
 - `Resources/`: `Info.plist` and `AppIcon.icns`.

@@ -11,6 +11,8 @@ struct KeyboardView: View {
         VStack(spacing: 6) {
             if !model.hasFullAccess {
                 fullAccessHelp
+            } else if model.mic != .off {
+                listening
             } else if run.action != nil {
                 result
             } else {
@@ -147,6 +149,63 @@ struct KeyboardView: View {
         .frame(maxHeight: .infinity)
     }
 
+    // MARK: Dictation
+
+    private var listening: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(model.mic == .listening ? Brand.orange : Color.secondary).frame(width: 10, height: 10)
+                Text(micStatus).font(.subheadline.weight(.semibold))
+                if model.mic == .finishing { ProgressView().controlSize(.small) }
+                Spacer()
+                Text(model.micLanguage == "he" ? "עברית" : "English").font(.caption).foregroundStyle(.secondary)
+            }
+            ScrollView {
+                Text(micBody)
+                    .font(.callout)
+                    .foregroundStyle(model.micText.isEmpty ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("kb-mic-text")
+            }
+            .scrollEdgeEffectHidden()
+            .defaultScrollAnchor(.bottom)
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(uiColor: .systemBackground).opacity(0.7)))
+            HStack(spacing: 8) {
+                Button("Cancel") { model.cancelMic() }
+                    .buttonStyle(.bordered)
+                Spacer()
+                if model.mic == .listening {
+                    Button("Done") { model.micTapped() }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("kb-mic-done")
+                } else if model.mic == .opening {
+                    Button("Open Lex") { model.micTapped() }
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var micStatus: String {
+        switch model.mic {
+        case .opening: return "Starting the mic…"
+        case .listening: return "Listening"
+        case .finishing: return "Writing it down…"
+        case .off: return ""
+        }
+    }
+
+    private var micBody: String {
+        if !model.micText.isEmpty { return model.micText }
+        switch model.mic {
+        case .opening: return "Lex opens for a moment to start the microphone. Then tap ◀ at the top left to come back here, and talk."
+        case .listening: return "Talk, then tap Done."
+        default: return ""
+        }
+    }
+
     // MARK: Clipboard and snippets
 
     private var clipboard: some View {
@@ -234,6 +293,30 @@ struct KeyboardView: View {
                     .frame(width: 44, height: 42)
                     .background(KeyBackground(dim: true))
             }
+            Button { model.micTapped() } label: {
+                Image(systemName: model.mic == .listening ? "stop.fill" : "mic.fill")
+                    .foregroundStyle(model.mic == .listening ? .white : .primary)
+                    .frame(width: 48, height: 42)
+                    .background {
+                        if model.mic == .listening {
+                            RoundedRectangle(cornerRadius: 8).fill(Brand.orange)
+                        } else {
+                            KeyBackground(dim: true)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(!model.hasFullAccess || model.mic == .finishing)
+            .accessibilityLabel(model.mic == .listening ? "Stop dictating" : "Dictate")
+            .accessibilityIdentifier("kb-mic")
+            Button { model.micLanguage = model.micLanguage == "he" ? "en" : "he" } label: {
+                Text(model.micLanguage == "he" ? "עב" : "EN")
+                    .font(.footnote.weight(.semibold))
+                    .frame(width: 40, height: 42)
+                    .background(KeyBackground(dim: true))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dictation language")
             Button { model.key(" ") } label: {
                 Text("space").font(.callout).frame(maxWidth: .infinity).frame(height: 42).background(KeyBackground())
             }

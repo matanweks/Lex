@@ -15,11 +15,19 @@ final class Recorder {
     var onLevel: ((Float) -> Void)?
     /// Each converted chunk, on the audio thread (for live transcription).
     var onChunk: (([Int16]) -> Void)?
+    /// Samples are kept only while this is on. The keyboard's mic keeps the recorder running
+    /// between dictations, and the audio in between is dropped.
+    var collecting = true
 
-    func start() throws {
+    /// `alongsideOtherAudio` keeps music playing: the keyboard's mic stays ready for minutes.
+    func start(alongsideOtherAudio: Bool = false) throws {
         lock.lock(); buffer = []; lock.unlock()
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+        if alongsideOtherAudio {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+        } else {
+            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+        }
         try session.setActive(true)
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -38,6 +46,8 @@ final class Recorder {
 
     var samples: [Int16] { lock.lock(); defer { lock.unlock() }; return buffer }
 
+    func reset() { lock.lock(); buffer = []; lock.unlock() }
+
     private func process(_ input: AVAudioPCMBuffer) {
         guard let converter else { return }
         let capacity = AVAudioFrameCount(Double(input.frameLength) * target.sampleRate / input.format.sampleRate + 32)
@@ -52,7 +62,7 @@ final class Recorder {
         }
         guard error == nil, let channel = out.int16ChannelData, out.frameLength > 0 else { return }
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
-        lock.lock(); buffer.append(contentsOf: chunk); lock.unlock()
+        if collecting { lock.lock(); buffer.append(contentsOf: chunk); lock.unlock() }
         onChunk?(chunk)
         var sum: Float = 0
         for s in chunk { let f = Float(s) / 32768; sum += f * f }
@@ -82,6 +92,22 @@ final class LiveTranscriber {
     func start(language: String) {
         let chunks = self.chunks
         let onText = self.onText
+        #if DEBUG
+        if StubClaude.isOn {
+            // Test support: the Simulator has no speech models, so "hear" a fixed sentence.
+            task = Task {
+                var said = ""
+                for word in "um so this is a test of the lex keyboard mic".split(separator: " ") {
+                    try await Task.sleep(for: .milliseconds(250))
+                    said += (said.isEmpty ? "" : " ") + word
+                    await onText?(said)
+                }
+                for await _ in chunks {}
+                return said
+            }
+            return
+        }
+        #endif
         task = Task {
             let module = try await Self.module(for: language)
             if let install = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
@@ -177,6 +203,24 @@ final class LiveTranscriber {
 
 // MARK: The flow
 
+/// What happens to a transcript before it's typed, in the app and for the keyboard's mic.
+enum DictationTidy {
+    /// A snippet's name types the snippet; otherwise Claude tidies (or translates) the words
+    /// when there's something to tidy. `onPolishing` runs before Claude is asked.
+    @MainActor
+    static func finish(_ raw: String, before: String, onPolishing: () -> Void = {}) async -> String {
+        let prefs = Prefs.current
+        if let snippet = Snippets.spokenMatch(raw, in: prefs.snippets) { return snippet.text }
+        let translateTo = prefs.dictationTranslateHebrew && SpeechText.language(of: raw) == "he" ? "English" : nil
+        guard LexEngine.claude.hasKey, translateTo != nil || (prefs.dictationPolish && DictationText.needsTidy(raw)) else { return raw }
+        onPolishing()
+        let cleaned = try? await LexEngine.claude.cleanDictation(raw, app: "", before: before, words: prefs.dictationWords,
+                                                                model: prefs.quickModel, style: prefs.style, voice: prefs.voice,
+                                                                translateTo: translateTo)
+        return DictationText.choose(cleaned: cleaned, raw: raw, translated: translateTo != nil)
+    }
+}
+
 /// Tap to talk, tap to stop: the words show while you speak, then Claude tidies them (fillers,
 /// self-corrections, punctuation) like on the Mac, and they go in where your cursor is.
 @MainActor
@@ -195,6 +239,8 @@ final class DictationModel: ObservableObject {
 
     func start(language: String) async {
         guard phase == .idle else { return }
+        // The keyboard's mic holds the microphone in the background; this one needs it now.
+        VoiceSession.shared.end()
         problem = nil
         liveText = ""
         phase = .starting
@@ -261,21 +307,7 @@ final class DictationModel: ObservableObject {
             phase = .idle
             return nil
         }
-        let prefs = Prefs.current
-        // Saying a snippet's name types the snippet.
-        if let snippet = Snippets.spokenMatch(raw, in: prefs.snippets) {
-            phase = .idle
-            return snippet.text
-        }
-        var final = raw
-        let translateTo = prefs.dictationTranslateHebrew && SpeechText.language(of: raw) == "he" ? "English" : nil
-        if LexEngine.claude.hasKey, translateTo != nil || (prefs.dictationPolish && DictationText.needsTidy(raw)) {
-            phase = .polishing
-            let cleaned = try? await LexEngine.claude.cleanDictation(raw, app: "Notes", before: before, words: prefs.dictationWords,
-                                                                    model: prefs.quickModel, style: prefs.style, voice: prefs.voice,
-                                                                    translateTo: translateTo)
-            final = DictationText.choose(cleaned: cleaned, raw: raw, translated: translateTo != nil)
-        }
+        let final = await DictationTidy.finish(raw, before: before) { phase = .polishing }
         phase = .idle
         return final
     }

@@ -6,6 +6,8 @@ struct LexApp: App {
     @StateObject private var settings = LexSettings()
     @StateObject private var compose = ComposeModel()
     @StateObject private var clipboard = ClipboardModel()
+    @ObservedObject private var voice = VoiceSession.shared
+    @State private var showListening = false
     @State private var tab = Tab.write
     @State private var welcome = !AppGroup.defaults.bool(forKey: "onboarded")
     @Environment(\.scenePhase) private var scenePhase
@@ -16,6 +18,7 @@ struct LexApp: App {
         #if DEBUG
         StubClaude.configure()
         #endif
+        VoiceSession.shared.clearLeftovers()
     }
 
     var body: some Scene {
@@ -36,6 +39,21 @@ struct LexApp: App {
                 }
             }
             .tint(Brand.indigo)
+            .safeAreaInset(edge: .top) {
+                if voice.isOn && !showListening {
+                    Button { showListening = true } label: {
+                        Label("The keyboard's mic is ready", systemImage: "mic.fill")
+                            .font(.footnote.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Brand.orange.opacity(0.18)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .fullScreenCover(isPresented: $showListening) {
+                ListeningView(session: voice) { showListening = false }
+            }
             .sheet(isPresented: $welcome) {
                 WelcomeView(settings: settings) {
                     AppGroup.defaults.set(true, forKey: "onboarded")
@@ -57,6 +75,10 @@ struct LexApp: App {
     private func open(_ url: URL) {
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         switch url.host {
+        case "listen":
+            // The Lex keyboard wants to dictate: start the mic while Lex is in front.
+            showListening = true
+            Task { await voice.begin() }
         case "write":
             if let text = query.first(where: { $0.name == "text" })?.value {
                 compose.text = text

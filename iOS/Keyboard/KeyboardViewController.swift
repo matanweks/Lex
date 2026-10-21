@@ -4,8 +4,8 @@ import UIKit
 
 /// The Lex keyboard. You switch to it with 🌐 when you want help with what you wrote: it
 /// fixes, rewrites or translates the selection, or the paragraph before the cursor, and puts
-/// the result back in place. It also types your snippets and what you copied, and drafts a
-/// reply to a message you copied.
+/// the result back in place. It also dictates (through the app, see `VoiceLink`), types your
+/// snippets and what you copied, and drafts a reply to a message you copied.
 final class KeyboardViewController: UIInputViewController {
     private let model = KeyboardModel()
 
@@ -36,6 +36,11 @@ final class KeyboardViewController: UIInputViewController {
         model.appeared(fullAccess: hasFullAccess)
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        model.disappeared()
+    }
+
     override func textDidChange(_ textInput: UITextInput?) { model.refresh() }
     override func selectionDidChange(_ textInput: UITextInput?) { model.refresh() }
 
@@ -49,6 +54,22 @@ final class KeyboardViewController: UIInputViewController {
     /// Deletes `count` characters before the cursor, one at a time (a keyboard can't select).
     func deleteBackward(_ count: Int = 1) {
         for _ in 0..<count { textDocumentProxy.deleteBackward() }
+    }
+
+    /// Opens the Lex app. Keyboards have no API for that, so this asks the app object at the
+    /// end of the responder chain directly (fine for a personal build; not App Store safe).
+    func openApp(_ url: URL) {
+        let selector = NSSelectorFromString("openURL:options:completionHandler:")
+        var responder: UIResponder? = self
+        while let current = responder {
+            if current is UIApplication, current.responds(to: selector) {
+                typealias Open = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, AnyObject?) -> Void
+                let open = unsafeBitCast(current.method(for: selector), to: Open.self)
+                open(current, selector, url as NSURL, NSDictionary(), nil)
+                return
+            }
+            responder = current.next
+        }
     }
 }
 
@@ -74,6 +95,21 @@ final class KeyboardModel: ObservableObject {
     @Published private(set) var hasKey = false
     @Published private(set) var canUndo = false
 
+    /// The keyboard's mic: opening Lex to start it, listening, or finishing the text.
+    enum Mic { case off, opening, listening, finishing }
+    @Published private(set) var mic = Mic.off
+    @Published private(set) var micText = ""
+    @Published var micLanguage = UserDefaults.standard.string(forKey: "micLanguage") ?? "en" {
+        didSet { UserDefaults.standard.set(micLanguage, forKey: "micLanguage") }
+    }
+    /// The dictation this keyboard asked for; kept across the trip to the app and back.
+    private var micRequest: UUID? {
+        get { UserDefaults.standard.string(forKey: "micRequest").flatMap(UUID.init) }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: "micRequest") }
+    }
+    private var voiceListener: VoiceLink.Listener?
+    private var micTimeout: Task<Void, Never>?
+
     let run = ActionRun()
     weak var controller: KeyboardViewController?
     private var working: Work?
@@ -84,6 +120,13 @@ final class KeyboardModel: ObservableObject {
         hasFullAccess = fullAccess
         refresh()
         guard fullAccess else { return }
+        // Only the keyboard on screen follows the dictation: iOS can keep an earlier one
+        // alive (from before the trip to Lex), and its text field is gone.
+        voiceListener = VoiceLink.Listener([.changed]) { _ in
+            Task { @MainActor [weak self] in self?.voiceChanged() }
+        }
+        // Back from the app that started the mic: pick up where it is.
+        voiceChanged()
         // Lets the app's Settings show that the keyboard is set up.
         AppGroup.defaults.set(Date(), forKey: "keyboardSeen")
         hasKey = LexEngine.claude.hasKey
@@ -201,6 +244,96 @@ final class KeyboardModel: ObservableObject {
     }
 
     func text(of item: ClipItem) -> String { ClipboardLog.store().fullText(for: item) }
+
+    func disappeared() {
+        voiceListener = nil
+    }
+
+    // MARK: Dictation
+
+    func micTapped() {
+        switch mic {
+        case .off: startMic()
+        case .listening:
+            mic = .finishing
+            VoiceLink.post(.stop)
+            giveUp(after: 25, if: .finishing, "Lex didn't send the text back. Open Lex and try again.")
+        case .opening: controller?.openApp(VoiceLink.listenURL)
+        case .finishing: break
+        }
+    }
+
+    func cancelMic() {
+        VoiceLink.post(.cancel)
+        micRequest = nil
+        mic = .off
+    }
+
+    private func startMic() {
+        guard let controller else { return }
+        let request = VoiceLink.Request(language: micLanguage, before: String(controller.before.suffix(300)))
+        VoiceLink.request = request
+        micRequest = request.id
+        micText = ""
+        mic = .opening
+        giveUp(after: 60, if: .opening, "The mic didn't start. Open Lex once, then try again.")
+        if VoiceLink.appIsReady {
+            VoiceLink.post(.start)
+            // iOS may have suspended Lex anyway; then open it.
+            micTimeout?.cancel()
+            micTimeout = Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                if !Task.isCancelled, mic == .opening { controller.openApp(VoiceLink.listenURL) }
+            }
+        } else {
+            controller.openApp(VoiceLink.listenURL)
+        }
+    }
+
+    /// Stops waiting if the app never answers (iOS ended it, or it couldn't start the mic).
+    private func giveUp(after seconds: Double, if phase: Mic, _ message: String) {
+        let id = micRequest
+        Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard mic == phase, micRequest == id else { return }
+            micRequest = nil
+            mic = .off
+            show(message)
+        }
+    }
+
+    /// The app wrote a new state for the dictation: show the words, or type the result.
+    private func voiceChanged() {
+        let state = VoiceLink.state
+        voiceLog.info("keyboard sees \(state?.phase.rawValue ?? "nothing", privacy: .public), mine \(state?.request == self.micRequest)")
+        guard let id = micRequest, let state, state.request == id else { return }
+        // Lex quit without finishing (the state outlived it).
+        if state.readyUntil < Date(), state.phase == .listening || state.phase == .finishing {
+            micRequest = nil
+            mic = .off
+            return
+        }
+        switch state.phase {
+        case .listening:
+            micTimeout?.cancel()
+            mic = .listening
+            micText = state.text
+        case .finishing:
+            mic = .finishing
+            micText = state.text
+        case .done:
+            micRequest = nil
+            mic = .off
+            if !state.text.isEmpty { type(state.text) }
+        case .failed:
+            micRequest = nil
+            mic = .off
+            show(state.error ?? "Dictation didn't work.")
+        case .ready:
+            micRequest = nil
+            mic = .off
+        }
+    }
 
     private func copyInstead(_ new: String) {
         ClipboardLog.copy(new)
