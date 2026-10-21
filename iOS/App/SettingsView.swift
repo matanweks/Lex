@@ -14,11 +14,21 @@ struct SettingsView: View {
             Form {
                 header
                 claudeSection
+                keyboardSection
                 writingSection
+                Section {
+                    NavigationLink {
+                        SnippetsView(settings: settings)
+                    } label: {
+                        LabeledContent("Snippets", value: "\(settings.snippets.count)")
+                    }
+                } footer: {
+                    Text("Saved text you type from the Lex keyboard, or by saying its name while you dictate.")
+                }
                 readAloudSection
                 dictationSection
                 clipboardSection
-                Section("Use Lex everywhere") {
+                Section("Also") {
                     tip("square.and.arrow.up", "In any app, select text, tap Share, then Lex. If Lex isn't in the row, tap More and add it.")
                     tip("bolt.fill", "In Shortcuts, Lex can fix, translate or summarize your clipboard. Put Fix My Clipboard on the Action button in Settings › Action Button › Shortcut.")
                 }
@@ -69,6 +79,22 @@ struct SettingsView: View {
             Text("Claude")
         } footer: {
             Text("The key stays in this iPhone's Keychain and is sent only to Anthropic. [Get a key](https://console.anthropic.com/settings/keys)")
+        }
+    }
+
+    private var keyboardSection: some View {
+        Section {
+            if settings.keyboardReady {
+                Label("The Lex keyboard is on", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            } else {
+                KeyboardSetupSteps()
+            }
+            Button("Open Settings", systemImage: "gear") { KeyboardSetupSteps.openSettings() }
+        } header: {
+            Text("Lex keyboard")
+        } footer: {
+            Text("While you type in any app, tap 🌐 to switch to Lex. It fixes, rewrites or translates the selection, or the last sentences before the cursor, right there. Full Access lets it reach Claude; Lex reads the field only when you tap an action.")
         }
     }
 
@@ -185,6 +211,92 @@ struct SettingsView: View {
     }
 }
 
+/// How to turn the keyboard on.
+struct KeyboardSetupSteps: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("1. In Settings › General › Keyboard › Keyboards, tap Add New Keyboard and choose Lex.")
+            Text("2. Tap Lex in that list and turn on Allow Full Access.")
+            Text("3. In any app, tap or hold 🌐 on the keyboard to switch to Lex.")
+        }
+        .font(.callout)
+    }
+
+    static func openSettings() {
+        UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+    }
+}
+
+/// Snippets: text you type from the keyboard, or say by name while dictating.
+struct SnippetsView: View {
+    @ObservedObject var settings: LexSettings
+    @State private var editing: Snippet?
+
+    var body: some View {
+        List {
+            ForEach(settings.snippets) { snippet in
+                Button { editing = snippet } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(snippet.name).font(.headline)
+                        Text(snippet.text).lineLimit(2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .onDelete { settings.snippets.remove(atOffsets: $0) }
+        }
+        .overlay {
+            if settings.snippets.isEmpty {
+                ContentUnavailableView("No snippets", systemImage: "text.badge.plus",
+                                       description: Text("Save text you type often, like your address or a calendar link. Type it from the Lex keyboard, or say its name while you dictate."))
+            }
+        }
+        .navigationTitle("Snippets")
+        .toolbar {
+            Button("Add", systemImage: "plus") { editing = Snippet(name: "", trigger: "", text: "") }
+        }
+        .sheet(item: $editing) { snippet in
+            SnippetEditor(snippet: snippet) { saved in
+                if let i = settings.snippets.firstIndex(where: { $0.id == saved.id }) {
+                    settings.snippets[i] = saved
+                } else {
+                    settings.snippets.append(saved)
+                }
+            }
+        }
+    }
+}
+
+private struct SnippetEditor: View {
+    @State var snippet: Snippet
+    let onSave: (Snippet) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Name, like \"my calendar link\"", text: $snippet.name)
+                TextField("The text", text: $snippet.text, axis: .vertical)
+                    .lineLimit(3...10)
+            }
+            .navigationTitle(snippet.name.isEmpty ? "New Snippet" : snippet.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(snippet)
+                        dismiss()
+                    }
+                    .disabled(snippet.name.trimmingCharacters(in: .whitespaces).isEmpty || snippet.text.isEmpty)
+                }
+            }
+        }
+    }
+}
+
 /// The first-run guide: the key Lex needs, and where Lex shows up outside the app.
 struct WelcomeView: View {
     @ObservedObject var settings: LexSettings
@@ -212,11 +324,14 @@ struct WelcomeView: View {
                         }
                         Link("Get a key", destination: URL(string: "https://console.anthropic.com/settings/keys")!).font(.footnote)
                     }
-                    step(2, "Use Lex in any app", done: false) {
-                        Text("Select text, tap Share, then Lex: fix it, rewrite it, translate it or summarize it, and copy the result back.").foregroundStyle(.secondary)
+                    step(2, "Turn on the Lex keyboard", done: settings.keyboardReady) {
+                        Text("Then, while you type in any app, tap 🌐 to switch to Lex and fix, rewrite or translate what you wrote, in place.").foregroundStyle(.secondary)
+                        KeyboardSetupSteps()
+                        Button("Open Settings") { KeyboardSetupSteps.openSettings() }
+                            .buttonStyle(.bordered)
                     }
-                    step(3, "Or from Shortcuts", done: false) {
-                        Text("Fix My Clipboard, Translate My Clipboard and Run a Lex Action are in the Shortcuts app. Put one on the Action button or Back Tap.").foregroundStyle(.secondary)
+                    step(3, "Also: the share sheet and Shortcuts", done: false) {
+                        Text("Select text, tap Share, then Lex. Or put Fix My Clipboard from the Shortcuts app on the Action button.").foregroundStyle(.secondary)
                     }
                 }
                 .padding(24)

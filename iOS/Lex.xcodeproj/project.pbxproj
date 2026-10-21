@@ -10,6 +10,8 @@
 		A10000000000000000000101 /* LexCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000201 /* LexCore */; };
 		A10000000000000000000102 /* LexCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000202 /* LexCore */; };
 		A10000000000000000000103 /* LexShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000302 /* LexShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000104 /* LexKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000303 /* LexKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000105 /* LexCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000203 /* LexCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -19,6 +21,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = A10000000000000000000602;
 			remoteInfo = LexShare;
+		};
+		A10000000000000000000402 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000603;
+			remoteInfo = LexKeyboard;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -30,6 +39,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				A10000000000000000000103 /* LexShare.appex in Embed Foundation Extensions */,
+				A10000000000000000000104 /* LexKeyboard.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -39,6 +49,7 @@
 /* Begin PBXFileReference section */
 		A10000000000000000000301 /* Lex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000302 /* LexShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LexShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000303 /* LexKeyboard.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LexKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -46,6 +57,7 @@
 		A10000000000000000000702 /* Share */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Share; sourceTree = "<group>"; };
 		A10000000000000000000703 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Shared; sourceTree = "<group>"; };
 		A10000000000000000000704 /* Config */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Config; sourceTree = "<group>"; };
+		A10000000000000000000705 /* Keyboard */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Keyboard; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,6 +77,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000803 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000105 /* LexCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -73,6 +93,7 @@
 			children = (
 				A10000000000000000000701 /* App */,
 				A10000000000000000000702 /* Share */,
+				A10000000000000000000705 /* Keyboard */,
 				A10000000000000000000703 /* Shared */,
 				A10000000000000000000704 /* Config */,
 				A10000000000000000000902 /* Products */,
@@ -84,6 +105,7 @@
 			children = (
 				A10000000000000000000301 /* Lex.app */,
 				A10000000000000000000302 /* LexShare.appex */,
+				A10000000000000000000303 /* LexKeyboard.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -104,6 +126,7 @@
 			);
 			dependencies = (
 				A10000000000000000000C01 /* PBXTargetDependency */,
+				A10000000000000000000C02 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000701 /* App */,
@@ -141,6 +164,30 @@
 			productReference = A10000000000000000000302 /* LexShare.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A10000000000000000000603 /* LexKeyboard */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000B04 /* Build configuration list for PBXNativeTarget "LexKeyboard" */;
+			buildPhases = (
+				A10000000000000000000A05 /* Sources */,
+				A10000000000000000000803 /* Frameworks */,
+				A10000000000000000000A06 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000705 /* Keyboard */,
+				A10000000000000000000703 /* Shared */,
+			);
+			name = LexKeyboard;
+			packageProductDependencies = (
+				A10000000000000000000203 /* LexCore */,
+			);
+			productName = LexKeyboard;
+			productReference = A10000000000000000000303 /* LexKeyboard.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -155,6 +202,9 @@
 						CreatedOnToolsVersion = 27.0;
 					};
 					A10000000000000000000602 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					A10000000000000000000603 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -178,6 +228,7 @@
 			targets = (
 				A10000000000000000000601 /* Lex */,
 				A10000000000000000000602 /* LexShare */,
+				A10000000000000000000603 /* LexKeyboard */,
 			);
 		};
 /* End PBXProject section */
@@ -191,6 +242,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A10000000000000000000A04 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000A06 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -214,6 +272,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000A05 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -221,6 +286,11 @@
 			isa = PBXTargetDependency;
 			target = A10000000000000000000602 /* LexShare */;
 			targetProxy = A10000000000000000000401 /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000C02 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000603 /* LexKeyboard */;
+			targetProxy = A10000000000000000000402 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -360,6 +430,30 @@
 			};
 			name = Debug;
 		};
+		A10000000000000000000E07 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/LexKeyboard.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/LexKeyboard-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Lex;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.lex.ios.keyboard;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		A10000000000000000000E06 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -376,6 +470,30 @@
 				);
 				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.lex.ios.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A10000000000000000000E08 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/LexKeyboard.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/LexKeyboard-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Lex;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.lex.ios.keyboard;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -405,6 +523,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A10000000000000000000B04 /* Build configuration list for PBXNativeTarget "LexKeyboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000E07 /* Debug */,
+				A10000000000000000000E08 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		A10000000000000000000B03 /* Build configuration list for PBXProject "Lex" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -430,6 +557,11 @@
 			productName = LexCore;
 		};
 		A10000000000000000000202 /* LexCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000D01 /* XCLocalSwiftPackageReference ".." */;
+			productName = LexCore;
+		};
+		A10000000000000000000203 /* LexCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000D01 /* XCLocalSwiftPackageReference ".." */;
 			productName = LexCore;

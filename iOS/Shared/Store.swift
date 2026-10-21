@@ -65,6 +65,7 @@ struct Prefs {
     var dictationPolish: Bool
     var dictationTranslateHebrew: Bool
     var dictationWords: [String]
+    var snippets: [Snippet]
 
     static var current: Prefs {
         let d = AppGroup.defaults
@@ -80,7 +81,13 @@ struct Prefs {
             dictationPolish: d.object(forKey: "dictationPolish") as? Bool ?? true,
             dictationTranslateHebrew: d.bool(forKey: "dictationTranslateHebrew"),
             dictationWords: (d.string(forKey: "dictationWords") ?? "")
-                .split(whereSeparator: { $0 == "," || $0.isNewline }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+                .split(whereSeparator: { $0 == "," || $0.isNewline }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
+            snippets: Self.snippets(d))
+    }
+
+    /// Saved the same way as on the Mac (JSON under "snippets").
+    static func snippets(_ d: UserDefaults) -> [Snippet] {
+        d.data(forKey: "snippets").flatMap { try? JSONDecoder().decode([Snippet].self, from: $0) } ?? []
     }
 }
 
@@ -103,6 +110,7 @@ final class LexSettings: ObservableObject {
     @Published var dictationWords: String { didSet { d.set(dictationWords, forKey: "dictationWords") } }
     @Published var clipboardOnOpen: Bool { didSet { d.set(clipboardOnOpen, forKey: "clipboardOnOpen") } }
     @Published var clipboardDays: Int { didSet { d.set(clipboardDays, forKey: "clipboardDays") } }
+    @Published var snippets: [Snippet] { didSet { d.set(try? JSONEncoder().encode(snippets), forKey: "snippets") } }
     @Published private(set) var hasAPIKey = false
     @Published private(set) var hasSpeechKey = false
 
@@ -121,6 +129,7 @@ final class LexSettings: ObservableObject {
         dictationWords = d.string(forKey: "dictationWords") ?? ""
         clipboardOnOpen = d.object(forKey: "clipboardOnOpen") as? Bool ?? true
         clipboardDays = d.object(forKey: "clipboardDays") as? Int ?? 30
+        snippets = Prefs.snippets(d)
         refreshKeys()
     }
 
@@ -160,7 +169,11 @@ final class LexSettings: ObservableObject {
     func refreshKeys() {
         hasAPIKey = !(Keychain.read(Keychain.anthropic) ?? "").isEmpty
         hasSpeechKey = !speechKey(for: speechProvider).isEmpty
+        keyboardReady = d.object(forKey: "keyboardSeen") != nil
     }
+
+    /// The Lex keyboard has opened with Full Access at least once (it notes that in the app group).
+    @Published private(set) var keyboardReady = false
 }
 
 /// Lex's look on iPhone: the indigo and orange of the app icon.

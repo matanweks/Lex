@@ -261,6 +261,11 @@ final class DictationModel: ObservableObject {
             return nil
         }
         let prefs = Prefs.current
+        // Saying a snippet's name types the snippet.
+        if let snippet = Snippets.spokenMatch(raw, in: prefs.snippets) {
+            phase = .idle
+            return snippet.text
+        }
         var final = raw
         let translateTo = prefs.dictationTranslateHebrew && SpeechText.language(of: raw) == "he" ? "English" : nil
         if LexEngine.claude.hasKey, translateTo != nil || (prefs.dictationPolish && DictationText.needsTidy(raw)) {

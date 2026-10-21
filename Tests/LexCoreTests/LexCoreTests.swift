@@ -672,3 +672,34 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(ClipboardStore.search(store.items, "").count, 2)
     }
 }
+
+final class TextTargetTests: XCTestCase {
+    func testKeepsTheSpacingAroundTheText() {
+        let t = TextTarget("  i has went home. ")!
+        XCTAssertEqual(t.core, "i has went home.")
+        XCTAssertEqual(t.lead, "  ")
+        XCTAssertEqual(t.tail, " ")
+        XCTAssertEqual(t.replacement(" I went home.\n"), "  I went home. ")
+        XCTAssertNil(TextTarget(" \n "))
+    }
+
+    func testBeforeCursorIsTheParagraphYouAreIn() {
+        let t = TextTarget.beforeCursor("Hi Dana,\nThe report are ready. I sends it tomorow")!
+        XCTAssertEqual(t.original, "The report are ready. I sends it tomorow")
+        XCTAssertEqual(t.words, 8)
+        XCTAssertNil(TextTarget.beforeCursor(""))
+        XCTAssertNil(TextTarget.beforeCursor("   "))
+    }
+
+    func testRightAfterALineBreakItIsTheParagraphAbove() {
+        let t = TextTarget.beforeCursor("First one.\nSecond one has a typo.\n\n")!
+        XCTAssertEqual(t.core, "Second one has a typo.")
+        XCTAssertEqual(t.tail, "\n\n")
+        XCTAssertEqual(t.original.count, "Second one has a typo.\n\n".count)
+    }
+
+    func testHebrewAndEmojiCountAsTheCharactersTheyDelete() {
+        let t = TextTarget.beforeCursor("שלום 👋🏽 עולם")!
+        XCTAssertEqual(t.original.count, 11)
+    }
+}

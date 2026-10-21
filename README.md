@@ -140,10 +140,11 @@ A capitalised name or term (Pelles, AppFab) that the spell checker flags but Cla
 
 ## Lex on iPhone
 
-iPhone apps can't read or edit text in other apps the way Lex does on the Mac, so on iPhone Lex reaches your text three ways:
+iPhone apps can't read or edit text in other apps the way Lex does on the Mac, so on iPhone Lex reaches your text four ways:
 
 | Where | What you do |
 |---|---|
+| **The Lex keyboard** | While you type in any app, tap 🌐 to switch to Lex. It fixes, improves, translates, shortens or retones the selection or what you just wrote, and puts the result **in place**. Tap 🌐 again to go back to your keyboard. |
 | **The Lex app** | Write, paste or dictate, then tap **Lex** to fix, improve, translate, shorten, summarize, draft a reply or check how it sounds. Select part of the text to work on just that; **Replace** puts a rewrite back. |
 | **The share sheet** | In any app, select text, tap **Share**, then **Lex**. Same actions; **Copy** the result and paste it where it belongs. |
 | **Shortcuts** | **Fix My Clipboard**, **Translate My Clipboard** and **Summarize My Clipboard**, plus **Run a Lex Action** for your own shortcuts. Put one on the Action button or Back Tap. |
@@ -154,16 +155,32 @@ Also in the app:
 - **Read aloud:** the iPhone voice, or Google Chirp 3 HD or ElevenLabs with an API key (there's no gcloud sign-in on iPhone).
 - **Settings:** your Anthropic key (in the Keychain, shared with the share sheet and Shortcuts), models, your style for chat, email or documents, your voice, and dictation options.
 
-Not on iPhone yet: a Lex keyboard for using Lex while you type in other apps, checking as you type, and syncing settings or the clipboard with the Mac.
+### The Lex keyboard
+
+It's a tools keyboard rather than a typing one: you type with your usual keyboard and switch to Lex (🌐) when you want help.
+
+- **Your text:** Fix mistakes, Improve, Translate (Hebrew ↔ English), Clean up (for text dictated with the keyboard's mic), Shorter, Friendlier, Formal and Better tone. Lex works on the selection, or on what's before the cursor, shows the result, and **Replace** puts it in place of the original. **Undo** puts the original back.
+- **Copied message:** copy a message you got, switch to Lex in the reply box, and tap **Reply to it** for a drafted reply, or **Summarize it**. **Insert** types the result at the cursor.
+- **Clipboard** and **Snippets** tabs type what you copied, or your saved text, at the cursor. Add snippets in the app under Settings › Snippets.
+- Space, delete and return keys, so you don't have to switch back for small edits.
+
+Turn it on once: Settings › General › Keyboard › Keyboards › Add New Keyboard › Lex, then tap Lex and turn on **Allow Full Access** (it needs network access to reach Claude, and the shared app group for your key, snippets and clipboard). Lex reads the text field only when you tap an action. The app's Settings tab shows when the keyboard is set up.
+
+What iOS doesn't let a keyboard do:
+- **Use the microphone.** Dictate with the regular keyboard's mic key, then switch to Lex and tap **Clean up**.
+- **See the whole text.** iOS shows a keyboard only the last few sentences before the cursor, so that's what Lex works on (the label says how many words). To work on a longer passage, select it first.
+- **Work in password fields,** where iOS always uses its own keyboard. Some apps also block other keyboards.
+
+Not on iPhone yet: checking as you type (that would need a full typing keyboard with its own layouts), and syncing settings, snippets or the clipboard with the Mac.
 
 ### Install on your iPhone
 
 Lex isn't on the App Store; you build it onto your phone with Xcode 26 or later. It needs iOS 26 or later.
 
 1. Open `iOS/Lex.xcodeproj` in Xcode.
-2. Under Signing & Capabilities, pick your team for both the **Lex** and **LexShare** targets. If Xcode says `dev.lex.ios` is taken, change both bundle IDs and the app group `group.dev.lex.ios` (in both targets and in `AppGroup.id` in `iOS/Shared/Store.swift`).
+2. Under Signing & Capabilities, pick your team for the **Lex**, **LexShare** and **LexKeyboard** targets. If Xcode says `dev.lex.ios` is taken, change the three bundle IDs and the app group `group.dev.lex.ios` (in all three targets and in `AppGroup.id` in `iOS/Shared/Store.swift`).
 3. Turn on Developer Mode on the iPhone (Settings › Privacy & Security), connect it, choose it as the destination and press Run.
-4. Open Lex and paste your Anthropic API key.
+4. Open Lex, paste your Anthropic API key, and turn on the keyboard as the welcome screen shows.
 
 With a free Apple ID, apps installed this way stop opening after 7 days until you run them from Xcode again. A paid Apple Developer Program team keeps them for a year and adds TestFlight.
 
@@ -252,6 +269,7 @@ The field commands only act on TextEdit, or on text that starts with `LEXTEST`; 
 For the iPhone app, build with `xcodebuild -project iOS/Lex.xcodeproj -scheme Lex -destination 'platform=iOS Simulator,name=iPhone 18 Pro' build`, or run it from Xcode. In debug builds:
 - Launching with `-LexStubClaude YES` answers Claude requests with canned text, so the app, the share sheet and Shortcuts can be tried without a key; `-LexStubClaude NO` turns it off again.
 - `lex://write?text=…` opens text in the Write tab (in every build); `lex://debug?dictate=<path>` dictates an audio file as if spoken, and `lex://debug?skip-welcome` skips the welcome screen.
+- The keyboard works in the Simulator once it's added under Settings › General › Keyboard › Keyboards, with Full Access on.
 - Apple's speech models don't run in the Simulator, so dictation needs a real iPhone. On the iOS 26.5 Simulator, Shortcuts couldn't start Lex's actions ("couldn't find AppShortcutsProvider"); on iOS 27 they work.
 
 Measured on 2026-10-19 and 2026-10-20:
@@ -270,9 +288,10 @@ Measured on 2026-10-19 and 2026-10-20:
 - `Sources/LexCore`: sentence splitting, mapping Claude's fixes to word-level ranges, word diff, the local checker, prompts, and the Claude client (raw HTTP with SSE streaming).
 - `Sources/LexCore/Assist.swift`: translation direction, the read-only actions (summary, key points, reply), snippet matching, per-app styles, word learning and the voice-profile prompts.
 - `Sources/LexCore/Dictation.swift`: dictation languages and engines, the pause detector that splits long dictation, the Google Speech-to-Text request, and the clean-up guard and spacing rules.
+- `Sources/LexCore/TextTarget.swift`: what the iPhone keyboard works on (the selection, or the text before the cursor) and the spacing it keeps.
 - `Sources/LexCore/Clipboard.swift`: the clipboard history store (index plus one file per entry), what's never kept, and search.
 - `Sources/LexCore/Speech.swift`: read-aloud text chunking, language detection, the Google (API key or gcloud sign-in) and ElevenLabs clients, and the audio cache.
-- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation and the Shortcuts actions; `Share/` the share-sheet extension; `Shared/` what both use (settings and keys in the app group and Keychain group, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `swift scripts/make-icon.swift ios ink <file>` draws its icon.
+- `iOS/`: the iPhone app. `App/` has the Write, Clipboard and Settings tabs, dictation and the Shortcuts actions; `Keyboard/` the Lex keyboard; `Share/` the share-sheet extension; `Shared/` what both use (settings and keys in the app group and Keychain group, the actions and their panel, read aloud, the clipboard log, and the Claude stub for tests); `Config/` the Info.plists and entitlements. `swift scripts/make-icon.swift ios ink <file>` draws its icon.
 - `Sources/Lex`: Accessibility tracking, overlay, suggestion card, refine panel, reader and mini player, the dictation recorder, live transcription, key tap and HUD, hotkeys, the Google sign-in watcher, settings, the setup guide, the clipboard history panel, and the brand colours and menu-bar mark.
 - `scripts/`: `install.sh` (the one-line installer), `build.sh` (build, sign, install), `make-icon.swift` (draws the app icon; `swift scripts/make-icon.swift icns ink Resources/AppIcon.icns`).
 - `Resources/`: `Info.plist` and `AppIcon.icns`.
