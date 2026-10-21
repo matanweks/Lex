@@ -4,14 +4,12 @@ import SwiftUI
 
 /// The app's side of the keyboard's mic. The keyboard opens Lex (lex://listen) to start the
 /// microphone, which iOS only allows while Lex is in front, and Lex keeps it running in the
-/// background while you dictate. It lets go of the mic a few seconds after you finish, as
-/// soon as iOS says the phone is locked, on a phone call, and after two minutes of listening.
+/// background while you dictate. The mic goes off the moment you tap Done or Cancel, as soon
+/// as iOS says the phone is locked, on a phone call, and after two minutes of listening.
 /// Audio is kept only between the keyboard's start and stop.
 @MainActor
 final class VoiceSession: ObservableObject {
     static let shared = VoiceSession()
-    /// How long the mic stays open after a dictation, for a quick follow-up one.
-    static let keepReady: TimeInterval = 5
     /// The longest dictation: then Lex types what it heard and lets go of the mic.
     static let longest: TimeInterval = 120
 
@@ -25,7 +23,6 @@ final class VoiceSession: ObservableObject {
     private var transcriber: LiveTranscriber?
     private var request: VoiceLink.Request?
     private var listener: VoiceLink.Listener?
-    private var idleTask: Task<Void, Never>?
     private var limitTask: Task<Void, Never>?
     private var guards: [NSObjectProtocol] = []
     private var lastWrite = Date.distantPast
@@ -86,24 +83,29 @@ final class VoiceSession: ObservableObject {
         ]
     }
 
-    /// Lets go of the mic.
+    /// Lets go of the mic and tells the keyboard.
     func end() {
         guard isOn else { return }
-        for observer in guards { NotificationCenter.default.removeObserver(observer) }
-        guards = []
-        limitTask?.cancel()
-        idleTask?.cancel()
         transcriber?.cancel()
         transcriber = nil
         feed.current = nil
         listening = false
+        releaseMic()
+        write(.ready)
+    }
+
+    /// Turns the microphone off. A transcriber that's finishing keeps what it was given.
+    private func releaseMic() {
+        guard isOn else { return }
+        for observer in guards { NotificationCenter.default.removeObserver(observer) }
+        guards = []
+        limitTask?.cancel()
         if !Self.simulated { recorder.stop() }
         #if DEBUG
         keepAwake?.stop()
         keepAwake = nil
         #endif
         isOn = false
-        write(.ready)
     }
 
     private func handle(_ signal: VoiceLink.Signal) {
@@ -120,7 +122,6 @@ final class VoiceSession: ObservableObject {
         guard let request = VoiceLink.request, request.id != self.request?.id || !listening else { return }
         transcriber?.cancel()
         self.request = request
-        idleTask?.cancel()
         let live = LiveTranscriber()
         live.onText = { text in VoiceSession.shared.heard(text) }
         live.start(language: request.language)
@@ -154,45 +155,33 @@ final class VoiceSession: ObservableObject {
         listening = false
         recorder.collecting = false
         feed.current = nil
-        write(.finishing, text: liveText)
         let silent = !Self.simulated && PauseSegmenter.isSilent(recorder.samples)
+        // The mic goes off now. Writing the text down takes a moment more, which iOS allows
+        // an app in the background as a background task.
+        releaseMic()
+        let background = UIApplication.shared.beginBackgroundTask(withName: "Lex dictation")
+        defer { UIApplication.shared.endBackgroundTask(background) }
+        write(.finishing, text: liveText)
         let raw: String
         do {
             raw = try await live.finish()
         } catch {
             transcriber = nil
-            write(.failed, error: "Speech recognition didn't work (\(error.localizedDescription)). The first time, iPhone downloads its speech model: try again in a minute, online.")
-            return keepReadyThenStop()
+            return write(.failed, error: "Speech recognition didn't work (\(error.localizedDescription)). The first time, iPhone downloads its speech model: try again in a minute, online.")
         }
         transcriber = nil
         guard !silent, !raw.isEmpty else {
-            write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
-            return keepReadyThenStop()
+            return write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
         }
         let text = await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
         voiceLog.info("app finished: \(raw.count) chars heard, \(text.count) typed")
         write(.done, text: text)
-        keepReadyThenStop()
     }
 
     private func cancel() {
         guard listening else { return }
-        limitTask?.cancel()
-        listening = false
         recorder.collecting = false
-        feed.current = nil
-        transcriber?.cancel()
-        transcriber = nil
-        write(.ready)
-        keepReadyThenStop()
-    }
-
-    private func keepReadyThenStop() {
-        idleTask?.cancel()
-        idleTask = Task {
-            try? await Task.sleep(for: .seconds(Self.keepReady))
-            if !Task.isCancelled { end() }
-        }
+        end()
     }
 
     private func fail(_ message: String) {
@@ -202,8 +191,10 @@ final class VoiceSession: ObservableObject {
 
     private func write(_ phase: VoiceLink.State.Phase, text: String = "", error: String? = nil) {
         lastWrite = Date()
-        VoiceLink.state = VoiceLink.State(phase: phase, text: text, error: error, request: request?.id,
-                                          readyUntil: isOn ? Date().addingTimeInterval(Self.keepReady) : .distantPast)
+        // `readyUntil` tells the keyboard the app is still working on its dictation; once the
+        // mic is off and the text is done, the next dictation opens Lex again.
+        let until = isOn ? Date().addingTimeInterval(Self.longest) : phase == .finishing ? Date().addingTimeInterval(30) : .distantPast
+        VoiceLink.state = VoiceLink.State(phase: phase, text: text, error: error, request: request?.id, readyUntil: until)
         VoiceLink.post(.changed)
     }
 
@@ -277,7 +268,7 @@ struct ListeningView: View {
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
             }
             Spacer()
-            Text("Lex turns the mic off a few seconds after you finish, and right away when you lock the phone.")
+            Text("Lex turns the mic off as soon as you tap Done or Cancel, and when you lock the phone.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

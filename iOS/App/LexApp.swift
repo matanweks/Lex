@@ -42,7 +42,7 @@ struct LexApp: App {
             .safeAreaInset(edge: .top) {
                 if voice.isOn && !showListening {
                     Button { showListening = true } label: {
-                        Label("The keyboard's mic is ready", systemImage: "mic.fill")
+                        Label("The keyboard's mic is on", systemImage: "mic.fill")
                             .font(.footnote.weight(.semibold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
