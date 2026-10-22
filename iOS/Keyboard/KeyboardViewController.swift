@@ -310,7 +310,14 @@ final class KeyboardModel: ObservableObject {
         SharedDefaults.standard.set(Date(), forKey: "keyboardSeen")
         hasKey = LexEngine.claude.hasKey
         snippets = Prefs.snippets(SharedDefaults.standard)
-        loadClipboard()
+        loadClipboard(saveCopied: false)
+    }
+
+    /// The Clipboard tab came up: what's on the clipboard now joins the history. Only then (and
+    /// on Reply to it), since iOS asks each time a keyboard reads the clipboard, and everything
+    /// copied on the Mac lands on the iPhone's too.
+    func clipboardOpened() {
+        loadClipboard(saveCopied: true)
     }
 
     /// What an action would work on right now: the selection, or the paragraph before the cursor.
@@ -341,6 +348,8 @@ final class KeyboardModel: ObservableObject {
         guard let copied = UIPasteboard.general.string, let text = TextTarget(copied) else {
             return show("Copy the message first, then tap this.")
         }
+        // Read anyway, so it goes in the history too.
+        save(copied, changeCount: UIPasteboard.general.changeCount)
         start(action, on: Work(source: .clipboard, text: text))
     }
 
@@ -531,13 +540,13 @@ final class KeyboardModel: ObservableObject {
         }
     }
 
-    /// Saves what's on the clipboard to the history if it's new (iPhone apps can't watch it),
-    /// then reads the history. Off the main thread, since it's all in the Keychain.
-    private func loadClipboard() {
-        // Only a new copy is read, so iOS doesn't tell you Lex pasted each time it opens.
+    /// Reads the history, after saving what's on the clipboard if `saveCopied` and it's a new
+    /// copy (iPhone apps can't watch the clipboard). Off the main thread: it's in the Keychain.
+    private func loadClipboard(saveCopied: Bool) {
+        // Only a new copy is read, so iOS doesn't ask again for the same one.
         let pasteboard = UIPasteboard.general
         var copied: String?
-        if !isPrivate, pasteboard.changeCount != ClipboardLog.seenChangeCount, SharedDefaults.standard.object(forKey: "clipboardOnOpen") as? Bool ?? true {
+        if saveCopied, wantsToSave, pasteboard.changeCount != ClipboardLog.seenChangeCount {
             ClipboardLog.seenChangeCount = pasteboard.changeCount
             if pasteboard.hasStrings, ClipPolicy.shouldRecord(types: pasteboard.types, appID: nil, ignoredApps: []) { copied = pasteboard.string }
         }
@@ -548,4 +557,15 @@ final class KeyboardModel: ObservableObject {
             await MainActor.run { [weak self] in self?.clips = clips }
         }
     }
+
+    /// Text read from the clipboard for another reason, saved to the history if it's new.
+    private func save(_ copied: String, changeCount: Int) {
+        guard wantsToSave, changeCount != ClipboardLog.seenChangeCount,
+              ClipPolicy.shouldRecord(types: UIPasteboard.general.types, appID: nil, ignoredApps: []) else { return }
+        ClipboardLog.seenChangeCount = changeCount
+        Task.detached(priority: .utility) { ClipboardLog.store().add(ClipboardLog.data(text: copied), appID: nil, appName: nil) }
+    }
+
+    /// Not in private mode, and only with "Save the clipboard when Lex opens" on.
+    private var wantsToSave: Bool { !isPrivate && SharedDefaults.standard.object(forKey: "clipboardOnOpen") as? Bool ?? true }
 }

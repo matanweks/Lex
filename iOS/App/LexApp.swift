@@ -67,8 +67,14 @@ struct LexApp: App {
             .onChange(of: scenePhase, initial: true) { _, phase in
                 guard phase == .active else { return }
                 settings.refreshKeys()
-                // Not while the welcome sheet is up: iOS's paste question would land on top of it.
-                clipboard.captureIfChanged(enabled: settings.clipboardOnOpen && !welcome)
+                // A moment later, once it's known whether the keyboard's mic opened Lex: then
+                // iOS's paste question would come up in the middle of dictating. Not while the
+                // welcome sheet is up either, where it would land on top of it.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard !showListening, scenePhase == .active else { return }
+                    clipboard.captureIfChanged(enabled: settings.clipboardOnOpen && !welcome)
+                }
             }
         }
     }

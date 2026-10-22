@@ -509,13 +509,14 @@ struct KeyboardView: View {
     // MARK: Clipboard and snippets
 
     private var clipboard: some View {
-        list(empty: "Nothing saved yet. What you copy shows up here when Lex opens.") {
+        list(empty: "Nothing saved yet. What you copy shows up here when you open this tab or the Lex app.") {
             ForEach(model.clips) { item in
                 row(item.text, detail: item.date.formatted(.relative(presentation: .named)), pinned: item.pinned) {
                     model.type(model.text(of: item))
                 }
             }
         }
+        .onAppear { model.clipboardOpened() }
     }
 
     private var snippetList: some View {
