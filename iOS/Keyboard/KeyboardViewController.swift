@@ -176,20 +176,9 @@ final class KeyboardViewController: UIInputViewController {
         edited(String(current.dropLast(count)))
     }
 
-    /// Opens the Lex app. Keyboards have no API for that, so this asks the app object at the
-    /// end of the responder chain directly (fine for a personal build; not App Store safe).
+    /// Opens the Lex app (see `openLexApp`).
     func openApp(_ url: URL) {
-        let selector = NSSelectorFromString("openURL:options:completionHandler:")
-        var responder: UIResponder? = self
-        while let current = responder {
-            if current is UIApplication, current.responds(to: selector) {
-                typealias Open = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, AnyObject?) -> Void
-                let open = unsafeBitCast(current.method(for: selector), to: Open.self)
-                open(current, selector, url as NSURL, NSDictionary(), nil)
-                return
-            }
-            responder = current.next
-        }
+        openLexApp(url, from: self)
     }
 }
 

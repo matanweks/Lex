@@ -69,6 +69,9 @@ final class StubClaude: URLProtocol {
             return tidy.prefix(1).uppercased() + tidy.dropFirst() + (tidy.hasSuffix(".") ? "" : ".")
         }
         if let message = tag("message") { return "Stub: \(message.count) characters that read friendly and clear." }
+        if (tag("instruction") ?? "").hasPrefix("Summarize this article") {
+            return "A stub summary of \((tag("text") ?? "").split(separator: " ").count) words.\n\n• The first point.\n• The second point."
+        }
         let instruction = (tag("instruction") ?? "").split(separator: " ").prefix(3).joined(separator: " ")
         return "[\(instruction)] \(tag("text") ?? "")"
     }

@@ -947,3 +947,66 @@ final class ClipboardStorageTests: XCTestCase {
         XCTAssertEqual(memory.items.keys.sorted(), ["index.json"])
     }
 }
+
+final class ArticleTests: XCTestCase {
+    func testFindsTheLinkTextIsAbout() {
+        XCTAssertEqual(ArticleLink.find(in: "https://example.com/story")?.host, "example.com")
+        XCTAssertEqual(ArticleLink.find(in: "Look at this one https://www.nytimes.com/2026/10/21/a.html")?.host, "www.nytimes.com")
+        XCTAssertNil(ArticleLink.find(in: "two https://a.com and https://b.com"))
+        XCTAssertNil(ArticleLink.find(in: "Hi! " + String(repeating: "word ", count: 40) + "https://a.com"))
+        XCTAssertNil(ArticleLink.find(in: "no link here"))
+    }
+
+    func testReadsXPostIDs() {
+        XCTAssertEqual(ArticleLink.xPostID(URL(string: "https://x.com/dana/status/1849912345678901234?s=46")!), "1849912345678901234")
+        XCTAssertEqual(ArticleLink.xPostID(URL(string: "https://twitter.com/dana/status/20/photo/1")!), "20")
+        XCTAssertEqual(ArticleLink.xPostID(URL(string: "https://mobile.twitter.com/i/web/status/42")!), "42")
+        XCTAssertNil(ArticleLink.xPostID(URL(string: "https://x.com/dana")!))
+        XCTAssertNil(ArticleLink.xPostID(URL(string: "https://example.com/dana/status/20")!))
+    }
+
+    func testReadsAPostAndWhatItQuotes() throws {
+        let json = """
+        {"code":200,"tweet":{"text":"First line\\nSecond line","author":{"name":"Dana Levi","screen_name":"dana"},
+         "quote":{"text":"The quoted post","author":{"name":"Noa"}}}}
+        """
+        let article = try XCTUnwrap(FxTwitter.article(from: Data(json.utf8), url: URL(string: "https://x.com/dana/status/1")!))
+        XCTAssertEqual(article.title, "Dana Levi on X")
+        XCTAssertEqual(article.byline, "@dana")
+        XCTAssertEqual(article.paragraphs, ["First line", "Second line", "Quoting Noa: The quoted post"])
+        XCTAssertNil(FxTwitter.article(from: Data(#"{"code":404,"message":"NOT_FOUND"}"#.utf8), url: URL(string: "https://x.com/a/status/1")!))
+    }
+
+    func testReadsAnXArticlesBlocks() throws {
+        let json = """
+        {"code":200,"tweet":{"text":"https://t.co/abc","author":{"name":"Dana","screen_name":"dana"},
+         "article":{"title":"Why we build","content":{"blocks":[
+           {"text":"Intro paragraph.","type":"unstyled"},{"text":"","type":"atomic"},
+           {"text":"A heading","type":"header-two"},{"text":"one","type":"ordered-list-item"},
+           {"text":"two","type":"ordered-list-item"},{"text":"a point","type":"unordered-list-item"}]}}}}
+        """
+        let article = try XCTUnwrap(FxTwitter.article(from: Data(json.utf8), url: URL(string: "https://x.com/dana/status/1")!))
+        XCTAssertEqual(article.title, "Why we build")
+        XCTAssertEqual(article.paragraphs, ["Intro paragraph.", "A heading", "1. one", "2. two", "• a point"])
+        XCTAssertEqual(article.site, "X")
+    }
+
+    func testTakesThePageScriptsResult() throws {
+        let body = (1...30).map { "Sentence number \($0) of the story." }.joined(separator: " ")
+        let article = try XCTUnwrap(Article(extracted: ["url": "https://www.example.com/a", "title": " A story ", "byline": "", "site": "",
+                                                        "text": "\(body)\n\n\n\n   Second   paragraph.  "]))
+        XCTAssertEqual(article.title, "A story")
+        XCTAssertEqual(article.site, "example.com")
+        XCTAssertEqual(article.paragraphs.count, 2)
+        XCTAssertEqual(article.paragraphs[1], "Second paragraph.")
+        XCTAssertNil(Article(extracted: ["url": "https://a.com", "text": "Too short to be an article."]))
+    }
+
+    func testSplitsLongTextBetweenParagraphs() {
+        let paragraph = String(repeating: "word ", count: 400).trimmingCharacters(in: .whitespaces)
+        let chunks = ArticleText.chunks(Array(repeating: paragraph, count: 5).joined(separator: "\n\n"), words: 900)
+        XCTAssertEqual(chunks.count, 3)
+        XCTAssertEqual(chunks[0].components(separatedBy: "\n\n").count, 2)
+        XCTAssertEqual(ArticleText.chunks("short"), ["short"])
+    }
+}
