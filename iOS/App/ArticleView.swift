@@ -6,6 +6,7 @@ import SwiftUI
 struct ArticleView: View {
     @ObservedObject var model: ArticleModel
     @ObservedObject var reader: Reader
+    @State private var pasteProblem: String?
 
     var body: some View {
         NavigationStack {
@@ -26,15 +27,13 @@ struct ArticleView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    PasteButton(payloadType: String.self) { texts in
-                        Task { @MainActor in
-                            if let text = texts.first { model.open(text: text) }
-                        }
-                    }
-                    .labelStyle(.iconOnly)
-                    .accessibilityIdentifier("article-paste")
+                    Button("Paste a Link", systemImage: "link.badge.plus", action: pasteLink)
+                        .accessibilityIdentifier("article-paste")
                 }
             }
+        }
+        .alert(pasteProblem ?? "", isPresented: Binding(get: { pasteProblem != nil }, set: { if !$0 { pasteProblem = nil } })) {
+            Button("OK", role: .cancel) {}
         }
         .safeAreaInset(edge: .bottom) {
             if reader.isActive { player }
@@ -52,11 +51,15 @@ struct ArticleView: View {
                     Text("In Safari, X or any app, tap Share, then Lex. Or copy a link and paste it here.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    PasteButton(payloadType: String.self) { texts in
-                        Task { @MainActor in
-                            if let text = texts.first { model.open(text: text) }
-                        }
+                    Button(action: pasteLink) {
+                        Label("Paste a Link", systemImage: "link.badge.plus")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .frame(height: 36)
+                            .background(Capsule().fill(Brand.indigo))
+                            .foregroundStyle(.white)
                     }
+                    .buttonStyle(.plain)
                     .padding(.top, 4)
                 }
                 .padding(.vertical, 6)
@@ -77,6 +80,20 @@ struct ArticleView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Opens the link on the clipboard. iOS may ask before Lex reads it (only on this tap).
+    private func pasteLink() {
+        let board = UIPasteboard.general
+        guard board.hasURLs || board.hasStrings else {
+            pasteProblem = "Copy a link first, then tap Paste a Link."
+            return
+        }
+        if let url = board.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            model.open(url)
+        } else if !(board.string.map { model.open(text: $0) } ?? false) {
+            pasteProblem = "There's no link on the clipboard. Copy the article's link, then try again."
         }
     }
 
