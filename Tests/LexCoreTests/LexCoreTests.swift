@@ -198,23 +198,23 @@ final class WordDiffTests: XCTestCase {
 
 final class ComposerTests: XCTestCase {
     func testAIReviewedSentenceDropsLocalFlags() {
-        let text = "Pelles ships fast. Teh end."
+        let text = "Norvia ships fast. Teh end."
         let local = [
-            Issue(range: NSRange(location: 0, length: 6), original: "Pelles", replacements: ["Pellets"], kind: .spelling, message: "", source: .local),
+            Issue(range: NSRange(location: 0, length: 6), original: "Norvia", replacements: ["Norway"], kind: .spelling, message: "", source: .local),
             Issue(range: NSRange(location: 19, length: 3), original: "Teh", replacements: ["The"], kind: .spelling, message: "", source: .local),
         ]
         let issues = IssueComposer.compose(text: text, caret: nil, local: local, review: { s in
-            s.text == "Pelles ships fast." ? AIReview(text: s.text, edits: [], complete: true) : nil
+            s.text == "Norvia ships fast." ? AIReview(text: s.text, edits: [], complete: true) : nil
         }, ignored: [])
         XCTAssertEqual(issues.map(\.original), ["Teh"])
     }
 
     func testStaleReviewKeepsFixesAndHidesSeenWords() {
-        // Claude reviewed "Pelles shipz fast." and flagged "shipz". The user then added a word.
-        let old = AIReview(text: "Pelles shipz fast.", edits: [AIEdit(original: "shipz", replacement: "ships", kind: .spelling, reason: "")], complete: true)
-        let text = "Pelles shipz realy fast."
+        // Claude reviewed "Norvia shipz fast." and flagged "shipz". The user then added a word.
+        let old = AIReview(text: "Norvia shipz fast.", edits: [AIEdit(original: "shipz", replacement: "ships", kind: .spelling, reason: "")], complete: true)
+        let text = "Norvia shipz realy fast."
         let local = [
-            Issue(range: NSRange(location: 0, length: 6), original: "Pelles", replacements: [], kind: .spelling, message: "", source: .local),
+            Issue(range: NSRange(location: 0, length: 6), original: "Norvia", replacements: [], kind: .spelling, message: "", source: .local),
             Issue(range: NSRange(location: 13, length: 5), original: "realy", replacements: ["really"], kind: .spelling, message: "", source: .local),
         ]
         let issues = IssueComposer.compose(text: text, caret: nil, local: local, review: { _ in old }, ignored: [])
@@ -410,7 +410,7 @@ final class DictationTests: XCTestCase {
     }
 
     func testGoogleRequestAndTranscript() throws {
-        let body = GoogleSTT.requestBody(audio: PCM16(samples: [1, 2, 3]), languages: ["en-US", "iw-IL"], phrases: ["Pelles", " "])
+        let body = GoogleSTT.requestBody(audio: PCM16(samples: [1, 2, 3]), languages: ["en-US", "iw-IL"], phrases: ["Norvia", " "])
         let config = body["config"] as? [String: Any]
         XCTAssertEqual(config?["model"] as? String, "chirp_3")
         XCTAssertEqual(config?["languageCodes"] as? [String], ["en-US", "iw-IL"])
@@ -456,9 +456,9 @@ final class DictationTests: XCTestCase {
     }
 
     func testDictationPrompt() {
-        let user = Prompts.dictationUser(transcript: "hi", app: "Slack", before: "Thanks,", words: ["Pelles", ""])
+        let user = Prompts.dictationUser(transcript: "hi", app: "Slack", before: "Thanks,", words: ["Norvia", ""])
         XCTAssertTrue(user.contains("<app>Slack</app>"))
-        XCTAssertTrue(user.contains("<words>Pelles</words>"))
+        XCTAssertTrue(user.contains("<words>Norvia</words>"))
         XCTAssertTrue(user.hasSuffix("<transcript>hi</transcript>"))
     }
 }
@@ -472,7 +472,7 @@ final class AssistTests: XCTestCase {
 
     let snippets = [
         Snippet(name: "my calendar link", trigger: ";cal", text: "https://cal.example.com/me"),
-        Snippet(name: "signature", trigger: ";sig", text: "Best,\nMatan"),
+        Snippet(name: "signature", trigger: ";sig", text: "Best,\nMaya"),
     ]
 
     func testSpokenSnippets() {
@@ -499,15 +499,15 @@ final class AssistTests: XCTestCase {
     }
 
     func testNameLikeWords() {
-        XCTAssertTrue(Learning.isNameLike("Pelles"))
-        XCTAssertTrue(Learning.isNameLike("AppFab"))
+        XCTAssertTrue(Learning.isNameLike("Norvia"))
+        XCTAssertTrue(Learning.isNameLike("DevHub"))
         XCTAssertTrue(Learning.isNameLike("SOC"))
         XCTAssertFalse(Learning.isNameLike("recieve"))
         XCTAssertFalse(Learning.isNameLike("x"))
-        XCTAssertFalse(Learning.isNameLike("Pel1es"))
-        // Claude fixed "Recieve" but left "Pelles" alone: only the name is a candidate.
+        XCTAssertFalse(Learning.isNameLike("Norv1a"))
+        // Claude fixed "Recieve" but left "Norvia" alone: only the name is a candidate.
         let edits = [AIEdit(original: "Recieve", replacement: "Receive", kind: .spelling, reason: "")]
-        XCTAssertEqual(Learning.acceptedNames(flagged: ["Pelles", "Recieve", "Pelles", "teh"], edits: edits), ["Pelles"])
+        XCTAssertEqual(Learning.acceptedNames(flagged: ["Norvia", "Recieve", "Norvia", "teh"], edits: edits), ["Norvia"])
     }
 
     func testPromptsCarryStyleVoiceAndTranslation() {
@@ -736,7 +736,7 @@ final class KeyboardTypingTests: XCTestCase {
     func testAutocorrectsOnlyTyposOfLowercaseWords() {
         XCTAssertEqual(TypingRules.autocorrection(for: "teh", guesses: ["the", "ten"]), "the")
         XCTAssertEqual(TypingRules.autocorrection(for: "recieve", guesses: ["receive"]), "receive")
-        XCTAssertNil(TypingRules.autocorrection(for: "Matan", guesses: ["satan"]))
+        XCTAssertNil(TypingRules.autocorrection(for: "Maya", guesses: ["many"]))
         XCTAssertEqual(TypingRules.autocorrection(for: "Teh", guesses: ["the"], atSentenceStart: true), "The")
         XCTAssertNil(TypingRules.autocorrection(for: "Teh", guesses: ["the"]))
         XCTAssertNil(TypingRules.autocorrection(for: "on", guesses: ["in"]))
@@ -780,10 +780,10 @@ final class PredictionTests: XCTestCase {
 
     func testCompletesWithYourWordsFirst() {
         var model = WordModel()
-        for _ in 0..<3 { model.learn("Matan", after: "hi", atSentenceStart: false) }
+        for _ in 0..<3 { model.learn("Maya", after: "hi", atSentenceStart: false) }
         let picks = Predictor.suggestions(prefix: "ma", previous: "hi", atSentenceStart: false,
                                           system: ["make", "many", "may"], guesses: [], model: model, seed: .english)
-        XCTAssertEqual(picks.first, "Matan")
+        XCTAssertEqual(picks.first, "Maya")
         XCTAssertEqual(picks.count, 3)
     }
 

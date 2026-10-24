@@ -131,7 +131,7 @@ Saved text you insert by saying its name while dictating, or by typing its trigg
 
 ### Learns your words
 
-A capitalised name or term (Pelles, AppFab) that the spell checker flags but Claude accepts, in two different sentences, is learned. It stops being underlined, and dictation spells it right. Lowercase words are never learned automatically, so real typos aren't. **Add to dictionary** on a suggestion card does the same by hand. Settings › Dictation lists learned words, and you can remove any of them.
+A capitalised name or term (Norvia, DevHub) that the spell checker flags but Claude accepts, in two different sentences, is learned. It stops being underlined, and dictation spells it right. Lowercase words are never learned automatically, so real typos aren't. **Add to dictionary** on a suggestion card does the same by hand. Settings › Dictation lists learned words, and you can remove any of them.
 
 ### Your style and voice
 

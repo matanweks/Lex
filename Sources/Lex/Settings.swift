@@ -799,7 +799,7 @@ struct SettingsView: View {
                 .disabled(!settings.hasAPIKey)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Words to know")
-                TextField("Names and terms, comma separated: Pelles, Procore, Trimble", text: $settings.dictationWords)
+                TextField("Names and terms, comma separated: Norvia, Figma, Kubernetes", text: $settings.dictationWords)
                     .textFieldStyle(.roundedBorder)
             }
             if !settings.learnedWords.isEmpty {

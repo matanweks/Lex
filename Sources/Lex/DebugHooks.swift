@@ -261,7 +261,7 @@ final class DebugHooks {
     private func liveTest() async {
         final class Box { var updates = 0; var firstMs: Int?; var last = "" }
         do {
-            let audio = try await sample("Um, so I think we should ship the update to Pelles on Tuesday, no wait, Wednesday. Can you let the team know?", language: "en")
+            let audio = try await sample("Um, so I think we should ship the update to Norvia on Tuesday, no wait, Wednesday. Can you let the team know?", language: "en")
             let box = Box()
             let session = AppleLiveSession()
             let t0 = Date()
@@ -366,7 +366,7 @@ final class DebugHooks {
     /// Dictation without a person: speak sample sentences with the Google voice, transcribe
     /// the audio, tidy it with Claude, and log what came out at each step (sample text only).
     private func sttTest(engine: DictationEngine) async {
-        var samples = [("Um, so I think we should, uh, ship the update to Pelles on Tuesday, no wait, Wednesday. Can you let the team know?", "en")]
+        var samples = [("Um, so I think we should, uh, ship the update to Norvia on Tuesday, no wait, Wednesday. Can you let the team know?", "en")]
         if engine == .google { samples.append(("אממ, אני חושב שכדאי לשלוח את העדכון ביום שלישי, לא רגע, ביום רביעי. תעדכן את הצוות בבקשה.", "he")) }
         for (text, language) in samples {
             do {
@@ -377,10 +377,10 @@ final class DebugHooks {
                 let t0 = Date()
                 let raw = engine == .apple
                     ? try await AppleTranscription.transcribe(audio)
-                    : try await speech.transcribe(audio, languages: settings.dictationLanguages.googleCodes, phrases: ["Pelles"])
+                    : try await speech.transcribe(audio, languages: settings.dictationLanguages.googleCodes, phrases: ["Norvia"])
                 let heard = Int(Date().timeIntervalSince(t0) * 1000)
                 let t1 = Date()
-                let cleaned = try? await client.cleanDictation(raw, app: "Slack", before: "", words: ["Pelles"], model: .haiku)
+                let cleaned = try? await client.cleanDictation(raw, app: "Slack", before: "", words: ["Norvia"], model: .haiku)
                 let tidied = Int(Date().timeIntervalSince(t1) * 1000)
                 let final = DictationText.choose(cleaned: cleaned, raw: raw)
                 Log.info("stt-test \(engine.rawValue) \(language): \(String(format: "%.1f", audio.seconds)) s audio | transcribed in \(heard) ms | tidied in \(tidied) ms")
