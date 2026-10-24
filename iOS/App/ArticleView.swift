@@ -47,27 +47,27 @@ struct ArticleView: View {
 
     private var start: some View {
         List(selection: $selection) {
-            if !selecting {
-                Section {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Image(systemName: "newspaper").font(.system(size: 34)).foregroundStyle(Brand.indigo)
-                        Text("Listen to an article, or get its summary or translation.").font(.headline)
-                        Text("In Safari, X or any app, tap Share, then Lex. Or copy a link and paste it here.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Button(action: pasteLink) {
-                            Label("Paste a Link", systemImage: "link.badge.plus")
-                                .font(.subheadline.weight(.semibold))
-                                .padding(.horizontal, 14)
-                                .frame(height: 36)
-                                .background(Capsule().fill(Brand.indigo))
-                                .foregroundStyle(.white)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 4)
+            // Stays while selecting, so the list doesn't jump.
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Image(systemName: "newspaper").font(.system(size: 34)).foregroundStyle(Brand.indigo)
+                    Text("Listen to an article, or get its summary or translation.").font(.headline)
+                    Text("In Safari, X or any app, tap Share, then Lex. Or copy a link and paste it here.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button(action: pasteLink) {
+                        Label("Paste a Link", systemImage: "link.badge.plus")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .frame(height: 36)
+                            .background(Capsule().fill(Brand.indigo))
+                            .foregroundStyle(.white)
                     }
-                    .padding(.vertical, 6)
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
                 }
+                .padding(.vertical, 6)
+                .disabled(selecting)
             }
             if !model.recent.isEmpty {
                 Section {
