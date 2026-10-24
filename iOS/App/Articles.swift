@@ -244,7 +244,12 @@ final class ArticleModel: ObservableObject {
     func isRead(_ article: Article) -> Bool { readAt[article.id] != nil }
 
     func setRead(_ article: Article, _ read: Bool) {
-        readAt[article.id] = read ? Date() : nil
+        setRead(ids: [article.id], read)
+    }
+
+    /// Several at once (the list's Select).
+    func setRead(ids: Set<String>, _ read: Bool) {
+        for id in ids { readAt[id] = read ? Date() : nil }
         saveRead()
     }
 
@@ -256,9 +261,13 @@ final class ArticleModel: ObservableObject {
     }
 
     func forget(_ article: Article) {
-        recent.removeAll { $0.id == article.id }
+        forget(ids: [article.id])
+    }
+
+    func forget(ids: Set<String>) {
+        recent.removeAll { ids.contains($0.id) }
         saveRead()
-        try? JSONEncoder().encode(recent).write(to: Self.recentFile, options: .atomic)
+        try? JSONEncoder().encode(recent).write(to: Self.recentFile, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
     // MARK: Claude

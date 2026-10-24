@@ -7,6 +7,9 @@ struct ArticleView: View {
     @ObservedObject var model: ArticleModel
     @ObservedObject var reader: Reader
     @State private var pasteProblem: String?
+    /// Select in the Lately list: articles to mark read or unread, or remove, together.
+    @State private var selecting = false
+    @State private var selection = Set<String>()
 
     var body: some View {
         NavigationStack {
@@ -43,50 +46,41 @@ struct ArticleView: View {
     // MARK: No article yet
 
     private var start: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: "newspaper").font(.system(size: 34)).foregroundStyle(Brand.indigo)
-                    Text("Listen to an article, or get its summary or translation.").font(.headline)
-                    Text("In Safari, X or any app, tap Share, then Lex. Or copy a link and paste it here.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button(action: pasteLink) {
-                        Label("Paste a Link", systemImage: "link.badge.plus")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .frame(height: 36)
-                            .background(Capsule().fill(Brand.indigo))
-                            .foregroundStyle(.white)
+        List(selection: $selection) {
+            if !selecting {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Image(systemName: "newspaper").font(.system(size: 34)).foregroundStyle(Brand.indigo)
+                        Text("Listen to an article, or get its summary or translation.").font(.headline)
+                        Text("In Safari, X or any app, tap Share, then Lex. Or copy a link and paste it here.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button(action: pasteLink) {
+                            Label("Paste a Link", systemImage: "link.badge.plus")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .frame(height: 36)
+                                .background(Capsule().fill(Brand.indigo))
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.top, 4)
+                    .padding(.vertical, 6)
                 }
-                .padding(.vertical, 6)
             }
             if !model.recent.isEmpty {
-                Section("Lately") {
+                Section {
                     ForEach(model.recent) { article in
                         let read = model.isRead(article)
-                        Button { model.show(article) } label: {
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                Image(systemName: read ? "checkmark.circle.fill" : "circle.fill")
-                                    .font(read ? .callout : .system(size: 8))
-                                    .foregroundStyle(read ? AnyShapeStyle(.secondary) : AnyShapeStyle(Brand.indigo))
-                                    .frame(width: 18)
-                                    .accessibilityLabel(read ? "Read" : "Not read yet")
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(article.title.isEmpty ? article.site : article.title)
-                                        .font(.callout.weight(read ? .regular : .medium))
-                                        .foregroundStyle(read ? .secondary : .primary)
-                                        .lineLimit(2)
-                                    Text([article.site, "\(article.minutes) min"].filter { !$0.isEmpty }.joined(separator: " · "))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
+                        Group {
+                            if selecting {
+                                row(article, read: read)
+                            } else {
+                                Button { model.show(article) } label: { row(article, read: read) }
+                                    .foregroundStyle(.primary)
                             }
                         }
-                        .foregroundStyle(.primary)
                         .swipeActions(edge: .leading) {
                             Button(read ? "Unread" : "Read", systemImage: read ? "circle" : "checkmark.circle") { model.setRead(article, !read) }
                                 .tint(Brand.indigo)
@@ -97,9 +91,74 @@ struct ArticleView: View {
                             Button("Remove", systemImage: "trash", role: .destructive) { model.forget(article) }
                         }
                     }
+                } header: {
+                    HStack {
+                        Text(selecting ? (selection.isEmpty ? "Choose articles" : "\(selection.count) selected") : "Lately")
+                        Spacer()
+                        Button(selecting ? "Done" : "Select") {
+                            selecting.toggle()
+                            selection = []
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Brand.indigo)
+                        .textCase(nil)
+                        .accessibilityIdentifier("lately-select")
+                    }
                 }
             }
         }
+        .environment(\.editMode, .constant(selecting ? .active : .inactive))
+        .safeAreaInset(edge: .bottom) {
+            if selecting { selectionBar }
+        }
+        .onChange(of: model.recent.isEmpty) { if model.recent.isEmpty { selecting = false } }
+    }
+
+    private func row(_ article: Article, read: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: read ? "checkmark.circle.fill" : "circle.fill")
+                .font(read ? .callout : .system(size: 8))
+                .foregroundStyle(read ? AnyShapeStyle(.secondary) : AnyShapeStyle(Brand.indigo))
+                .frame(width: 18)
+                .accessibilityLabel(read ? "Read" : "Not read yet")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(article.title.isEmpty ? article.site : article.title)
+                    .font(.callout.weight(read ? .regular : .medium))
+                    .foregroundStyle(read ? .secondary : .primary)
+                    .lineLimit(2)
+                Text([article.site, "\(article.minutes) min"].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// What to do with the articles picked in Select.
+    private var selectionBar: some View {
+        let all = Set(model.recent.map(\.id))
+        return HStack(spacing: 18) {
+            Button(selection == all ? "None" : "All") { selection = selection == all ? [] : all }
+                .accessibilityIdentifier("select-all")
+            Spacer()
+            Group {
+                Button("Read", systemImage: "checkmark.circle") { finishSelection { model.setRead(ids: $0, true) } }
+                    .accessibilityIdentifier("select-read")
+                Button("Unread", systemImage: "circle") { finishSelection { model.setRead(ids: $0, false) } }
+                Button("Remove", systemImage: "trash", role: .destructive) { finishSelection { model.forget(ids: $0) } }
+            }
+            .disabled(selection.isEmpty)
+        }
+        .font(.subheadline.weight(.semibold))
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private func finishSelection(_ action: (Set<String>) -> Void) {
+        action(selection)
+        selection = []
+        selecting = false
     }
 
     /// Opens the link on the clipboard. iOS may ask before Lex reads it (only on this tap).
