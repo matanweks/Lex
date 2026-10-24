@@ -116,6 +116,8 @@ final class ArticleModel: ObservableObject {
     @Published private(set) var state = State.empty
     @Published private(set) var result: Result?
     @Published private(set) var recent: [Article] = []
+    /// When you finished each article (by its id): marked by you, or heard to the end.
+    @Published private(set) var readAt: [String: Date] = [:]
     /// What's being read aloud ("Article", "Summary"), for the player bar and the lock screen.
     @Published private(set) var reading: String?
     let reader = Reader()
@@ -126,9 +128,18 @@ final class ArticleModel: ObservableObject {
     private var runID = UUID()
     private var watching: Set<AnyCancellable> = []
     private static var recentFile: URL { LocalStore.folder.appendingPathComponent("Articles.json") }
+    private static let readKey = "articlesRead"
+    /// What's being read aloud is the whole article (or its whole translation), so hearing it
+    /// to the end marks it read; a summary doesn't.
+    private var readingWholeArticle = false
 
     init() {
         if let data = try? Data(contentsOf: Self.recentFile), let saved = try? JSONDecoder().decode([Article].self, from: data) { recent = saved }
+        readAt = LocalStore.defaults.dictionary(forKey: Self.readKey) as? [String: Date] ?? [:]
+        reader.onFinished = { [weak self] in
+            guard let self, self.readingWholeArticle, let article = self.article else { return }
+            self.setRead(article, true)
+        }
         reader.$phase.combineLatest(reader.$speed).sink { [weak self] phase, _ in
             Task { @MainActor in self?.updateLockScreen(phase) }
         }.store(in: &watching)
@@ -230,8 +241,23 @@ final class ArticleModel: ObservableObject {
         state = .empty
     }
 
+    func isRead(_ article: Article) -> Bool { readAt[article.id] != nil }
+
+    func setRead(_ article: Article, _ read: Bool) {
+        readAt[article.id] = read ? Date() : nil
+        saveRead()
+    }
+
+    /// Only for the articles still listed.
+    private func saveRead() {
+        let listed = Set(recent.map(\.id))
+        readAt = readAt.filter { listed.contains($0.key) }
+        LocalStore.defaults.set(readAt, forKey: Self.readKey)
+    }
+
     func forget(_ article: Article) {
         recent.removeAll { $0.id == article.id }
+        saveRead()
         try? JSONEncoder().encode(recent).write(to: Self.recentFile, options: .atomic)
     }
 
@@ -315,6 +341,7 @@ final class ArticleModel: ObservableObject {
         }
         reader.read(text)
         reading = label
+        readingWholeArticle = label == "Article" || (result?.kind == .translation && result?.title.hasPrefix("Summary") == false)
     }
 
     func stopReading() {

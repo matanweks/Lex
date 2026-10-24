@@ -67,16 +67,35 @@ struct ArticleView: View {
             if !model.recent.isEmpty {
                 Section("Lately") {
                     ForEach(model.recent) { article in
+                        let read = model.isRead(article)
                         Button { model.show(article) } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(article.title.isEmpty ? article.site : article.title).font(.callout.weight(.medium)).lineLimit(2)
-                                Text([article.site, "\(article.minutes) min"].filter { !$0.isEmpty }.joined(separator: " · "))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Image(systemName: read ? "checkmark.circle.fill" : "circle.fill")
+                                    .font(read ? .callout : .system(size: 8))
+                                    .foregroundStyle(read ? AnyShapeStyle(.secondary) : AnyShapeStyle(Brand.indigo))
+                                    .frame(width: 18)
+                                    .accessibilityLabel(read ? "Read" : "Not read yet")
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(article.title.isEmpty ? article.site : article.title)
+                                        .font(.callout.weight(read ? .regular : .medium))
+                                        .foregroundStyle(read ? .secondary : .primary)
+                                        .lineLimit(2)
+                                    Text([article.site, "\(article.minutes) min"].filter { !$0.isEmpty }.joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         .foregroundStyle(.primary)
+                        .swipeActions(edge: .leading) {
+                            Button(read ? "Unread" : "Read", systemImage: read ? "circle" : "checkmark.circle") { model.setRead(article, !read) }
+                                .tint(Brand.indigo)
+                        }
                         .swipeActions { Button("Remove", role: .destructive) { model.forget(article) } }
+                        .contextMenu {
+                            Button(read ? "Mark as Unread" : "Mark as Read", systemImage: read ? "circle" : "checkmark.circle") { model.setRead(article, !read) }
+                            Button("Remove", systemImage: "trash", role: .destructive) { model.forget(article) }
+                        }
                     }
                 }
             }
@@ -130,7 +149,13 @@ struct ArticleView: View {
                     let source = [article.site, article.byline].filter { !$0.isEmpty }.joined(separator: " · ")
                     if !source.isEmpty { Text(source).font(.footnote.weight(.medium)).foregroundStyle(Brand.indigo) }
                     if !article.title.isEmpty { Text(article.title).font(.title2.bold()) }
-                    Text("\(article.words) words · \(article.minutes) min read").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Text("\(article.words) words · \(article.minutes) min read").font(.caption).foregroundStyle(.secondary)
+                        if model.isRead(article) {
+                            Label("Read", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(Brand.indigo)
+                                .accessibilityIdentifier("article-read-badge")
+                        }
+                    }
                 }
                 .direction(article.isHebrew)
                 actions(article)
@@ -147,6 +172,19 @@ struct ArticleView: View {
                 }
                 .direction(article.isHebrew)
                 .accessibilityIdentifier("article-text")
+                // At the end, for when you read it yourself.
+                let read = model.isRead(article)
+                Button { model.setRead(article, !read) } label: {
+                    Label(read ? "Read · Mark as Unread" : "Mark as Read", systemImage: read ? "checkmark.circle.fill" : "checkmark.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Capsule().fill(read ? Color.primary.opacity(0.07) : Brand.indigo))
+                        .foregroundStyle(read ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 10)
+                .accessibilityIdentifier("article-mark-read")
             }
             .padding()
         }
@@ -166,6 +204,8 @@ struct ArticleView: View {
                 pill("To \(target)", "character.bubble") { model.translate() }
                     .accessibilityIdentifier("article-translate")
                 Menu {
+                    let read = model.isRead(article)
+                    Button(read ? "Mark as Unread" : "Mark as Read", systemImage: read ? "circle" : "checkmark.circle") { model.setRead(article, !read) }
                     Button("Copy the Text", systemImage: "doc.on.doc") { ClipboardLog.copy(article.text) }
                     if let url = URL(string: article.url), url.scheme?.hasPrefix("http") == true {
                         Link(destination: url) { Label("Open the Page", systemImage: "safari") }

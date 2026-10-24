@@ -16,6 +16,8 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     @Published private(set) var speed: Double = Reader.allowed(SharedDefaults.standard.object(forKey: "speechSpeed") as? Double ?? 1.0)
 
     static let speeds: [Double] = [0.8, 1.0, 1.25, 1.5, 1.75, 2.0]
+    /// Called when reading reaches the end of the text (not when it's stopped).
+    var onFinished: (@MainActor () -> Void)?
 
     /// Within the speeds offered (the setting, or a rate from the lock screen, could be anything).
     static func allowed(_ value: Double) -> Double {
@@ -211,7 +213,12 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
             guard p === self.player else { return }
             self.player = nil
             let next = self.current + 1
-            if next < self.chunks.count { self.play(next) } else { self.stop() }
+            if next < self.chunks.count {
+                self.play(next)
+            } else {
+                self.stop()
+                self.onFinished?()
+            }
         }
     }
 
@@ -270,7 +277,11 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in if self.player == nil { self.stop() } }
+        Task { @MainActor in
+            guard self.player == nil else { return }
+            self.stop()
+            self.onFinished?()
+        }
     }
 }
 
