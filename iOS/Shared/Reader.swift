@@ -12,6 +12,12 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var voice = ""
     @Published private(set) var note: String?
+    /// How fast it reads; changing it applies at once and becomes the default (Settings › Read aloud).
+    @Published private(set) var speed: Double = SharedDefaults.standard.object(forKey: "speechSpeed") as? Double ?? 1.0
+
+    static let speeds: [Double] = [0.8, 1.0, 1.25, 1.5, 1.75, 2.0]
+    /// What the skip buttons jump by.
+    static let skipSeconds = 15.0
 
     private let client = SpeechClient(cacheDirectory: LocalStore.folder.appendingPathComponent("Speech", isDirectory: true))
     private let synth = AVSpeechSynthesizer()
@@ -24,6 +30,11 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     private var run = UUID()
     private var language: String?
     private var failedFrom: Int?
+    /// The iPhone voice's text, where the current utterance starts in it (UTF-16), and the word
+    /// it's saying, so it can skip and change speed mid-way.
+    private var spokenText: NSString = ""
+    private var spokenStart = 0
+    private var spokenAt = 0
 
     override init() {
         super.init()
@@ -86,7 +97,41 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         }
     }
 
-    private var speed: Double { SharedDefaults.standard.object(forKey: "speechSpeed") as? Double ?? 1.0 }
+    func setSpeed(_ value: Double) {
+        speed = value
+        SharedDefaults.standard.set(value, forKey: "speechSpeed")
+        if let player {
+            player.rate = Float(value)
+        } else if synth.isSpeaking {
+            // The iPhone voice's rate is set per utterance: go on from the word it's at.
+            speakSystem(from: spokenAt, paused: phase == .paused)
+        }
+    }
+
+    /// Forward (positive) or back by about `seconds`, across parts of the audio.
+    func skip(_ seconds: Double) {
+        if let player {
+            let target = player.currentTime + seconds
+            let paused = phase == .paused
+            if target >= player.duration {
+                guard current + 1 < chunks.count else { return stop() }
+                player.stop()
+                self.player = nil
+                play(current + 1, from: target - player.duration, paused: paused)
+            } else if target < 0, current > 0, audio[current - 1] != nil {
+                player.stop()
+                self.player = nil
+                // Negative: that far before the end of the part before.
+                play(current - 1, from: target, paused: paused)
+            } else {
+                player.currentTime = max(0, target)
+            }
+        } else if synth.isSpeaking {
+            // The iPhone voice says about 15 characters a second at 1×.
+            let move = Int(seconds * 15 * speed)
+            speakSystem(from: wordStart(near: spokenAt + move), paused: phase == .paused)
+        }
+    }
 
     private func fetch(_ i: Int) {
         guard i < chunks.count, audio[i] == nil, !fetching.contains(i), let template else { return }
@@ -122,7 +167,8 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         if rest.isEmpty { stop() } else { speakWithSystemVoice(rest) }
     }
 
-    private func play(_ i: Int) {
+    /// `offset` seconds into part `i`; a negative one counts back from its end.
+    private func play(_ i: Int, from offset: Double = 0, paused: Bool = false) {
         if let failedFrom, i >= failedFrom, audio[i] == nil {
             fallBack(from: i)
             return
@@ -130,6 +176,8 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         guard let data = audio[i] else {
             current = i
             phase = .loading
+            fetch(i)
+            fetch(i + 1)
             return
         }
         do {
@@ -137,10 +185,11 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
             p.delegate = self
             p.enableRate = true
             p.rate = Float(speed)
-            p.play()
+            if offset != 0 { p.currentTime = offset > 0 ? min(offset, max(p.duration - 0.2, 0)) : max(0, p.duration + offset) }
+            if paused { p.prepareToPlay() } else { p.play() }
             player = p
             current = i
-            phase = .playing
+            phase = paused ? .paused : .playing
             fetch(i + 1)
             fetch(i + 2)
         } catch {
@@ -159,7 +208,18 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     }
 
     private func speakWithSystemVoice(_ text: String) {
-        let utterance = AVSpeechUtterance(string: text)
+        spokenText = text as NSString
+        speakSystem(from: 0)
+    }
+
+    /// The iPhone voice, from `location` (UTF-16) in its text.
+    private func speakSystem(from location: Int, paused: Bool = false) {
+        let start = min(max(location, 0), spokenText.length)
+        guard start < spokenText.length else { return stop() }
+        if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
+        spokenStart = start
+        spokenAt = start
+        let utterance = AVSpeechUtterance(string: spokenText.substring(from: start))
         let prefix = language ?? "en"
         utterance.voice = AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix(prefix) }
@@ -170,6 +230,21 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         voice = utterance.voice?.name ?? "iPhone voice"
         phase = .playing
         synth.speak(utterance)
+        if paused {
+            synth.pauseSpeaking(at: .immediate)
+            phase = .paused
+        }
+    }
+
+    /// The start of the word at `location`, so a skip doesn't begin mid-word.
+    private func wordStart(near location: Int) -> Int {
+        var i = min(max(location, 0), spokenText.length)
+        while i > 0, i < spokenText.length, let c = Unicode.Scalar(spokenText.character(at: i - 1)), !CharacterSet.whitespacesAndNewlines.contains(c) { i -= 1 }
+        return i
+    }
+
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, willSpeakRangeOfSpeechString range: NSRange, utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.spokenAt = self.spokenStart + range.location }
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

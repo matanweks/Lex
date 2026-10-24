@@ -129,15 +129,38 @@ final class ArticleModel: ObservableObject {
 
     init() {
         if let data = try? Data(contentsOf: Self.recentFile), let saved = try? JSONDecoder().decode([Article].self, from: data) { recent = saved }
-        reader.$phase.sink { [weak self] phase in
+        reader.$phase.combineLatest(reader.$speed).sink { [weak self] phase, _ in
             Task { @MainActor in self?.updateLockScreen(phase) }
         }.store(in: &watching)
         let center = MPRemoteCommandCenter.shared()
-        for command in [center.togglePlayPauseCommand, center.playCommand, center.pauseCommand] {
-            command.addTarget { [weak self] _ in
-                MainActor.assumeIsolated { self?.reader.togglePause() }
-                return .success
-            }
+        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.reader.togglePause() }
+            return .success
+        }
+        center.playCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.reader.phase == .paused { self?.reader.togglePause() } }
+            return .success
+        }
+        center.pauseCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.reader.phase == .playing { self?.reader.togglePause() } }
+            return .success
+        }
+        // The lock screen's ±15 seconds, and its speed choices.
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value: Reader.skipSeconds)]
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: Reader.skipSeconds)]
+        center.skipForwardCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.reader.skip(Reader.skipSeconds) }
+            return .success
+        }
+        center.skipBackwardCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { self?.reader.skip(-Reader.skipSeconds) }
+            return .success
+        }
+        center.changePlaybackRateCommand.supportedPlaybackRates = Reader.speeds.map { NSNumber(value: $0) }
+        center.changePlaybackRateCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
+            MainActor.assumeIsolated { self?.reader.setSpeed(Double(event.playbackRate)) }
+            return .success
         }
         center.stopCommand.addTarget { [weak self] _ in
             MainActor.assumeIsolated { self?.stopReading() }
@@ -306,7 +329,8 @@ final class ArticleModel: ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [
             MPMediaItemPropertyTitle: reading == "Article" || reading == nil ? article.title : "\(reading ?? ""): \(article.title)",
             MPMediaItemPropertyArtist: article.site.isEmpty ? "Lex" : article.site,
-            MPNowPlayingInfoPropertyPlaybackRate: phase == .playing ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: phase == .playing ? reader.speed : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: reader.speed,
         ]
     }
 }

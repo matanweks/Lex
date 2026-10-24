@@ -237,31 +237,63 @@ struct ArticleView: View {
     // MARK: Reading aloud
 
     private var player: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "waveform").foregroundStyle(Brand.indigo)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.reading == "Article" ? (model.article?.title ?? "Article") : (model.reading ?? "Reading"))
-                    .font(.footnote.weight(.semibold))
-                    .lineLimit(1)
-                if let note = reader.note {
-                    // Why it's the iPhone's voice: no key for the voice picked, or it failed.
-                    Text("\(reader.voice) · \(note)").font(.caption2).foregroundStyle(.orange).lineLimit(2)
-                } else {
-                    Text(reader.phase == .loading ? "Loading…" : reader.voice).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform").foregroundStyle(Brand.indigo)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.reading == "Article" ? (model.article?.title ?? "Article") : (model.reading ?? "Reading"))
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(1)
+                    if let note = reader.note {
+                        // Why it's the iPhone's voice: no key for the voice picked, or it failed.
+                        Text("\(reader.voice) · \(note)").font(.caption2).foregroundStyle(.orange).lineLimit(2)
+                    } else {
+                        Text(reader.phase == .loading ? "Loading…" : reader.voice).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            Spacer()
-            Button { reader.togglePause() } label: {
-                Image(systemName: reader.phase == .paused ? "play.fill" : "pause.fill").font(.title3)
-            }
-            .disabled(reader.phase == .loading)
-            .accessibilityLabel(reader.phase == .paused ? "Play" : "Pause")
-            Button { model.stopReading() } label: { Image(systemName: "stop.fill").font(.title3) }
+            HStack {
+                Menu {
+                    Picker("Speed", selection: Binding(get: { reader.speed }, set: { reader.setSpeed($0) })) {
+                        ForEach(Reader.speeds, id: \.self) { Text(speedLabel($0)).tag($0) }
+                    }
+                } label: {
+                    Text(speedLabel(reader.speed))
+                        .font(.footnote.weight(.semibold).monospacedDigit())
+                        .frame(minWidth: 52, minHeight: 30)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+                .accessibilityLabel("Speed, \(speedLabel(reader.speed))")
+                .accessibilityIdentifier("player-speed")
+                Spacer()
+                Button { reader.skip(-Reader.skipSeconds) } label: { Image(systemName: "gobackward.15").font(.title2) }
+                    .accessibilityLabel("Back 15 seconds")
+                    .accessibilityIdentifier("player-back")
+                Button { reader.togglePause() } label: {
+                    Image(systemName: reader.phase == .paused ? "play.fill" : "pause.fill").font(.title).frame(width: 56)
+                }
+                .disabled(reader.phase == .loading)
+                .accessibilityLabel(reader.phase == .paused ? "Play" : "Pause")
+                Button { reader.skip(Reader.skipSeconds) } label: { Image(systemName: "goforward.15").font(.title2) }
+                    .accessibilityLabel("Forward 15 seconds")
+                    .accessibilityIdentifier("player-forward")
+                Spacer()
+                Button { model.stopReading() } label: {
+                    Image(systemName: "stop.fill").font(.title3).frame(minWidth: 52, minHeight: 30)
+                }
                 .accessibilityLabel("Stop")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Brand.indigo)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    private func speedLabel(_ speed: Double) -> String {
+        (speed == speed.rounded() ? String(format: "%.0f", speed) : String(format: "%g", speed)) + "×"
     }
 }
 
