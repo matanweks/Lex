@@ -935,6 +935,15 @@ final class ClipboardStorageTests: XCTestCase {
         func names() -> Set<String> { Set(items.keys) }
     }
 
+    func testNeverKeepsCopiedKeys() {
+        let store = ClipboardStore(storage: Memory())
+        let google = "AIza" + String(repeating: "x", count: 35)
+        XCTAssertNil(store.add([[ClipTypes.plainText: Data("  \(google)\n".utf8)]], appID: nil, appName: nil))
+        XCTAssertNil(store.add([[ClipTypes.plainText: Data(("sk-ant-api03-" + String(repeating: "a", count: 40)).utf8)]], appID: nil, appName: nil))
+        XCTAssertNotNil(store.add([[ClipTypes.plainText: Data("My key is AIza in the doc".utf8)]], appID: nil, appName: nil))
+        XCTAssertFalse(ClipPolicy.looksLikeSecret("https://example.com/a-very-long-path-to-something"))
+    }
+
     func testKeepsTheHistoryInAnyStorage() {
         let memory = Memory()
         let store = ClipboardStore(storage: memory, maxBytes: 100)

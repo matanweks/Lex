@@ -45,6 +45,23 @@ public enum ClipPolicy {
         "com.bitwarden.desktop", "com.dashlane.dashlanephonefinal", "com.lastpass.LastPass", "org.keepassxc.keepassxc",
     ]
 
+    /// A copied API key or token, alone: never kept, even when the app it came from didn't
+    /// mark it private (a key copied from a cloud console, or one Lex put there for you).
+    public static func looksLikeSecret(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.contains(where: \.isWhitespace), t.count >= 20, t.count <= 200 else { return false }
+        let patterns = [
+            #"^AIza[0-9A-Za-z_\-]{35}$"#,                  // Google API key
+            #"^sk-ant-[A-Za-z0-9_\-]{20,}$"#,              // Anthropic
+            #"^sk-(proj-)?[A-Za-z0-9_\-]{20,}$"#,          // OpenAI
+            #"^sk_[0-9a-f]{32,}$"#,                        // ElevenLabs
+            #"^(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{30,}$"#, // GitHub
+            #"^(AKIA|ASIA)[0-9A-Z]{16}$"#,                 // AWS
+            #"^xox[abpr]-[A-Za-z0-9\-]{10,}$"#,            // Slack
+        ]
+        return patterns.contains { t.range(of: $0, options: .regularExpression) != nil }
+    }
+
     /// Bigger copies (huge screenshots, whole documents) aren't kept.
     public static let maxBytes = 20 * 1024 * 1024
 
@@ -175,7 +192,7 @@ public final class ClipboardStore {
     @discardableResult
     public func add(_ data: ClipData, appID: String?, appName: String?, date: Date = Date()) -> ClipItem? {
         let bytes = data.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.count } }
-        guard bytes <= maxBytes, let (kind, text) = ClipPolicy.describe(data) else { return nil }
+        guard bytes <= maxBytes, let (kind, text) = ClipPolicy.describe(data), !ClipPolicy.looksLikeSecret(text) else { return nil }
         let fingerprint = ClipPolicy.fingerprint(kind, text: text, data: data)
         if let i = items.firstIndex(where: { $0.fingerprint == fingerprint }) {
             var existing = items.remove(at: i)

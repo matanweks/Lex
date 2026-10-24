@@ -172,10 +172,34 @@ else
   if ! xcodebuild -project "$root/iOS/Lex.xcodeproj" -scheme Lex -configuration Release -destination 'generic/platform=iOS' \
     -derivedDataPath "$build" DEVELOPMENT_TEAM="$team" -allowProvisioningUpdates build >"$build.log" 2>&1; then
     for profile in "$aside/"*; do [ -f "$profile" ] && mv "$profile" "$profiles/"; done
-    grep -E "error:" "$build.log" | head -5 >&2 || true
-    fail "The build failed; the full log is in $build.log."
+    if grep -q "No Accounts" "$build.log"; then
+      # Xcode is signed out of your Apple Account, so Apple can't give new profiles. The ones
+      # Xcode has still sign Lex until they run out; build with those.
+      signedOut=1
+      xcodebuild -project "$root/iOS/Lex.xcodeproj" -scheme Lex -configuration Release -destination 'generic/platform=iOS' \
+        -derivedDataPath "$build" DEVELOPMENT_TEAM="$team" build >"$build.log" 2>&1 \
+        || fail "Xcode is signed out of your Apple Account and Lex's profiles have run out. Sign in at Xcode › Settings › Accounts, then run this again."
+    else
+      grep -E "error:" "$build.log" | head -5 >&2 || true
+      fail "The build failed; the full log is in $build.log."
+    fi
   fi
   rm -rf "$aside"
+fi
+
+if [ -n "${signedOut:-}" ]; then
+  built=$(epoch "$(security cms -D -i "$app/embedded.mobileprovision" 2>/dev/null | plutil -extract ExpirationDate raw -o - - 2>/dev/null || true)")
+  echo "Xcode is signed out of your Apple Account, so this install can't last longer than $(when "$built"). Sign in at Xcode › Settings › Accounts to renew it for 7 days." >&2
+  # The job: installing the same profiles again adds nothing; say what's needed instead (at
+  # most every 6 hours).
+  if [ "$mode" = due ] && [ "$built" -le "$(cat "$build.expires" 2>/dev/null || echo 0)" ]; then
+    last=$(cat "$build.notified" 2>/dev/null || echo 0)
+    if [ $(( $(date +%s) - last )) -gt $(( 6 * 3600 )) ]; then
+      notify "Lex on your iPhone stops working $(when "$built"). Sign in to Xcode (Settings › Accounts) on this Mac so it can be renewed."
+      date +%s >"$build.notified"
+    fi
+    exit 1
+  fi
 fi
 
 bold "Installing on the iPhone…"

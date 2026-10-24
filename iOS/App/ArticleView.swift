@@ -243,7 +243,12 @@ struct ArticleView: View {
                 Text(model.reading == "Article" ? (model.article?.title ?? "Article") : (model.reading ?? "Reading"))
                     .font(.footnote.weight(.semibold))
                     .lineLimit(1)
-                Text(reader.phase == .loading ? "Loading…" : reader.voice).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                if let note = reader.note {
+                    // Why it's the iPhone's voice: no key for the voice picked, or it failed.
+                    Text("\(reader.voice) · \(note)").font(.caption2).foregroundStyle(.orange).lineLimit(2)
+                } else {
+                    Text(reader.phase == .loading ? "Loading…" : reader.voice).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             Spacer()
             Button { reader.togglePause() } label: {
