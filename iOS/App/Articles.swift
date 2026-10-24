@@ -158,8 +158,9 @@ final class ArticleModel: ObservableObject {
         }
         center.changePlaybackRateCommand.supportedPlaybackRates = Reader.speeds.map { NSNumber(value: $0) }
         center.changePlaybackRateCommand.addTarget { [weak self] event in
-            guard let event = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
-            MainActor.assumeIsolated { self?.reader.setSpeed(Double(event.playbackRate)) }
+            guard let event = event as? MPChangePlaybackRateCommandEvent,
+                  let rate = Reader.speeds.first(where: { abs($0 - Double(event.playbackRate)) < 0.01 }) else { return .commandFailed }
+            MainActor.assumeIsolated { self?.reader.setSpeed(rate) }
             return .success
         }
         center.stopCommand.addTarget { [weak self] _ in

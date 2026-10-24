@@ -13,9 +13,14 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     @Published private(set) var voice = ""
     @Published private(set) var note: String?
     /// How fast it reads; changing it applies at once and becomes the default (Settings › Read aloud).
-    @Published private(set) var speed: Double = SharedDefaults.standard.object(forKey: "speechSpeed") as? Double ?? 1.0
+    @Published private(set) var speed: Double = Reader.allowed(SharedDefaults.standard.object(forKey: "speechSpeed") as? Double ?? 1.0)
 
     static let speeds: [Double] = [0.8, 1.0, 1.25, 1.5, 1.75, 2.0]
+
+    /// Within the speeds offered (the setting, or a rate from the lock screen, could be anything).
+    static func allowed(_ value: Double) -> Double {
+        value.isFinite ? min(max(value, speeds[0]), speeds[speeds.count - 1]) : 1.0
+    }
     /// What the skip buttons jump by.
     static let skipSeconds = 15.0
 
@@ -35,6 +40,8 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     private var spokenText: NSString = ""
     private var spokenStart = 0
     private var spokenAt = 0
+    /// A pause asked for before the iPhone voice started; it takes effect once it does.
+    private var pendingPause = false
 
     override init() {
         super.init()
@@ -80,6 +87,7 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         audio = [:]
         fetching = []
         failedFrom = nil
+        pendingPause = false
         current = 0
         phase = .idle
     }
@@ -90,7 +98,7 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
             if let player { player.pause() } else { synth.pauseSpeaking(at: .word) }
             phase = .paused
         case .paused:
-            if let player { player.play() } else { synth.continueSpeaking() }
+            if let player { player.play() } else if pendingPause { pendingPause = false } else { synth.continueSpeaking() }
             phase = .playing
         default:
             break
@@ -98,10 +106,10 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     }
 
     func setSpeed(_ value: Double) {
-        speed = value
-        SharedDefaults.standard.set(value, forKey: "speechSpeed")
+        speed = Self.allowed(value)
+        SharedDefaults.standard.set(speed, forKey: "speechSpeed")
         if let player {
-            player.rate = Float(value)
+            player.rate = Float(speed)
         } else if synth.isSpeaking {
             // The iPhone voice's rate is set per utterance: go on from the word it's at.
             speakSystem(from: spokenAt, paused: phase == .paused)
@@ -128,7 +136,7 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
             }
         } else if synth.isSpeaking {
             // The iPhone voice says about 15 characters a second at 1×.
-            let move = Int(seconds * 15 * speed)
+            let move = Int(min(max(seconds * 15 * speed, -1_000_000), 1_000_000))
             speakSystem(from: wordStart(near: spokenAt + move), paused: phase == .paused)
         }
     }
@@ -231,9 +239,20 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
         phase = .playing
         synth.speak(utterance)
         if paused {
-            synth.pauseSpeaking(at: .immediate)
+            // Pausing does nothing until the utterance has begun: do it then.
+            pendingPause = true
             phase = .paused
         }
+    }
+
+    private func applyPendingPause() {
+        guard pendingPause else { return }
+        pendingPause = false
+        synth.pauseSpeaking(at: .immediate)
+    }
+
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.applyPendingPause() }
     }
 
     /// The start of the word at `location`, so a skip doesn't begin mid-word.
@@ -244,7 +263,10 @@ final class Reader: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechS
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, willSpeakRangeOfSpeechString range: NSRange, utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.spokenAt = self.spokenStart + range.location }
+        Task { @MainActor in
+            self.spokenAt = self.spokenStart + range.location
+            self.applyPendingPause()
+        }
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
