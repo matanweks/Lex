@@ -422,12 +422,13 @@ struct KeyboardView: View {
                     if case .failed(let message) = run.phase {
                         Text(message).foregroundStyle(.red)
                     } else {
-                        Text(run.output.isEmpty ? "Writing…" : run.output)
+                        Text(run.output.isEmpty ? "Writing…" : TextDirection.marked(run.output))
                             .foregroundStyle(run.output.isEmpty ? .secondary : .primary)
                     }
                 }
                 .font(.callout)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .environment(\.layoutDirection, TextDirection.isRightToLeft(run.output) ? .rightToLeft : .leftToRight)
                 .accessibilityIdentifier("kb-result")
             }
             .scrollEdgeEffectHidden()

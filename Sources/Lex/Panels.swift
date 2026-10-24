@@ -50,6 +50,11 @@ extension View {
         background(VisualEffect().clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous)))
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
     }
+
+    /// Hebrew lays out right to left: right-aligned, with "leading" meaning the right edge.
+    func readingDirection(_ rightToLeft: Bool) -> some View {
+        environment(\.layoutDirection, rightToLeft ? .rightToLeft : .leftToRight)
+    }
 }
 
 enum Toast {

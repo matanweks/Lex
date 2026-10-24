@@ -193,11 +193,12 @@ struct ComposeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text(target.text)
+                    Text(TextDirection.marked(target.text))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(4)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.layoutDirection, TextDirection.isRightToLeft(target.text) ? .rightToLeft : .leftToRight)
                     ActionsPanel(text: target.text, run: run, reader: reader,
                                  onReplace: { replace(target, with: $0) },
                                  onCopy: { ClipboardLog.copy($0) })

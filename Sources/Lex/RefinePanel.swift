@@ -113,25 +113,31 @@ struct RefineView: View {
     }
 
     @ViewBuilder private var result: some View {
+        let shown = displayText
+        let hebrew = TextDirection.isRightToLeft(String(shown.characters))
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 if let note = model.note {
-                    Label { Text(note).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true) } icon: {
+                    Label { Text(Self.directed(AttributedString(note))).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true) } icon: {
                         Image(systemName: "person.wave.2").foregroundStyle(green)
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .readingDirection(TextDirection.isRightToLeft(note))
                     .background(RoundedRectangle(cornerRadius: 7).fill(green.opacity(0.10)))
                 }
                 if let error = model.error {
                     Text(error).foregroundStyle(.red).textSelection(.enabled)
                 }
-                Text(displayText)
-                    .font(.system(size: 14))
-                    .lineSpacing(3)
+                // Hebrew: right-aligned, and a size up with more room between lines, since its
+                // letters run smaller than Latin ones at the same point size.
+                Text(Self.directed(shown))
+                    .font(.system(size: hebrew ? 15 : 14))
+                    .lineSpacing(hebrew ? 5 : 3)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .readingDirection(hebrew)
                 if model.lastRunUnchanged, !model.isStreaming {
                     Label("Already reads well, nothing to change.", systemImage: "checkmark.circle.fill")
                         .font(.caption).foregroundStyle(green)
@@ -154,6 +160,16 @@ struct RefineView: View {
         }
         if model.mode == .edit, model.showDiff, !model.versions.isEmpty { return Self.diff(model.original, model.latest, green: green) }
         return AttributedString(model.latest)
+    }
+
+    /// Each paragraph marked with its own direction, so a Hebrew paragraph that opens with an
+    /// English word still reads right to left.
+    static func directed(_ text: AttributedString) -> AttributedString {
+        var out = text
+        for (offset, mark) in TextDirection.paragraphMarks(String(text.characters)).reversed() {
+            out.insert(AttributedString(String(mark)), at: out.characters.index(out.startIndex, offsetBy: offset))
+        }
+        return out
     }
 
     static func diff(_ a: String, _ b: String, green: Color) -> AttributedString {

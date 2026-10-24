@@ -72,10 +72,13 @@ struct ActionsPanel: View {
             case .failed(let message):
                 Text(message).foregroundStyle(.red).font(.callout)
             default:
-                Text(run.output.isEmpty ? "Writing…" : run.output)
+                // Hebrew right to left, each paragraph marked so one that opens with an English
+                // word still reads right (see TextDirection).
+                Text(run.output.isEmpty ? "Writing…" : TextDirection.marked(run.output))
                     .foregroundStyle(run.output.isEmpty ? .secondary : .primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .environment(\.layoutDirection, TextDirection.isRightToLeft(run.output) ? .rightToLeft : .leftToRight)
                     .accessibilityIdentifier("result")
             }
             if run.phase == .done {
