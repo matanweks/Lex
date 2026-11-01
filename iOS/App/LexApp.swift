@@ -59,6 +59,7 @@ struct LexApp: App {
                     .buttonStyle(.plain)
                 }
             }
+            .modifier(ExpiryAccessory())
             .fullScreenCover(isPresented: $showListening) {
                 ListeningView(session: voice) { showListening = false }
             }
@@ -73,6 +74,8 @@ struct LexApp: App {
             .onChange(of: scenePhase, initial: true) { _, phase in
                 guard phase == .active else { return }
                 settings.refreshKeys()
+                // Reminders before this install stops opening (free developer accounts sign for 7 days).
+                if !welcome { Task { await InstallExpiry.scheduleReminders() } }
                 // An article shared to Lex, in case the share sheet couldn't open Lex itself.
                 if articles.takeFromShareSheet() { tab = .read }
                 // A moment later, once it's known whether a link opened Lex (the keyboard's mic,

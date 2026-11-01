@@ -46,6 +46,11 @@ struct SettingsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 13))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Lex \(Brand.version)").font(.headline)
+                    if let date = InstallExpiry.date {
+                        Text("This install works until \(date.formatted(.dateTime.weekday(.wide).day().month(.wide).hour().minute())).")
+                            .font(.footnote)
+                            .foregroundStyle(InstallExpiry.endsSoon ? .orange : .secondary)
+                    }
                     Text(Brand.tagline).font(.footnote).foregroundStyle(.secondary)
                     Link("github.com/matanweks/Lex", destination: Brand.repo).font(.footnote)
                 }
