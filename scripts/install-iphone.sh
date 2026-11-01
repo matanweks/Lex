@@ -144,7 +144,9 @@ fi
 
 device="${LEX_DEVICE:-}"
 if [ -z "$device" ]; then
-  device=$(xcrun devicectl list devices 2>/dev/null | awk '/physical/ && /available|connected/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{16}$|^[0-9A-F-]{36}$/) { print $i; exit } }')
+  # An iPhone or iPad that's reachable now ("available", not "unavailable"; not this Mac).
+  device=$(xcrun devicectl list devices 2>/dev/null \
+    | awk '/physical/ && /(iPhone|iPad)[0-9]+,[0-9]+/ && /(^|[[:space:]])(available|connected)/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{16}$|^[0-9A-F-]{36}$/) { print $i; exit } }')
   [ -n "$device" ] || fail "No iPhone found. Connect it with a cable (or keep it on the same Wi-Fi), unlock it, and run this again."
 fi
 
