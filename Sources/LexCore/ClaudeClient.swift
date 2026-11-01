@@ -166,7 +166,8 @@ public final class ClaudeClient: @unchecked Sendable {
     }
 
     /// Translates one part of an article (see `Prompts.translateSystem`), with the whole article as
-    /// context and the end of the part before. For quality rather than speed: more effort and
+    /// context and the end of the part before (the page's text goes in the message, never the
+    /// system prompt). For quality rather than speed: more effort and
     /// thinking than the live requests. The article is cached, so the parts after the first
     /// don't pay for it again. `onText` gets the part's translation so far.
     public func translateArticlePart(_ part: String, number: Int, of count: Int, article: String, title: String,
@@ -175,11 +176,13 @@ public final class ClaudeClient: @unchecked Sendable {
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 32000,
-            "system": [
-                ["type": "text", "text": Prompts.translateSystem(into: target)],
+            // The instructions alone in the system prompt; the page's text in the message. The
+            // article block is cached, so the parts after the first don't pay for it again.
+            "system": Prompts.translateSystem(into: target),
+            "messages": [["role": "user", "content": [
                 ["type": "text", "text": Prompts.translateContext(article: article, title: title), "cache_control": ["type": "ephemeral"]],
-            ],
-            "messages": [["role": "user", "content": Prompts.translateUser(part: part, number: number, of: count, previous: previous, into: target)]],
+                ["type": "text", "text": Prompts.translateUser(part: part, number: number, of: count, previous: previous, into: target)],
+            ]]],
             "output_config": ["effort": "high"],
         ]
         var betas: [String] = []

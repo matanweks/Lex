@@ -49,7 +49,9 @@ final class StubClaude: URLProtocol {
 
     /// Echoes the text with a tag naming what was asked, so a test can see which action ran.
     static func answer(to body: [String: Any]) -> String {
-        let user = ((body["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
+        // A message is text, or blocks of text (the article translation's).
+        let content = (body["messages"] as? [[String: Any]])?.first?["content"]
+        let user = content as? String ?? ((content as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? "")
         func tag(_ name: String) -> String? {
             guard let open = user.range(of: "<\(name)>"), let close = user.range(of: "</\(name)>", range: open.upperBound..<user.endIndex) else { return nil }
             return String(user[open.upperBound..<close.lowerBound])
