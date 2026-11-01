@@ -170,6 +170,9 @@ struct Prefs {
             snippets: Self.snippets(d))
     }
 
+    /// The model for translating articles (the Read tab): the best by default, since it's for reading.
+    static var articleModel: ClaudeModel { ClaudeModel(rawValue: SharedDefaults.standard.string(forKey: "articleModel") ?? "") ?? .opus }
+
     /// Just the model for quick work, without reading every setting.
     static var quickModel: ClaudeModel { ClaudeModel(rawValue: SharedDefaults.standard.string(forKey: "liveModel") ?? "") ?? .haiku }
 
@@ -186,6 +189,7 @@ final class LexSettings: ObservableObject {
 
     @Published var rewriteModelID: String { didSet { d.set(rewriteModelID, forKey: "refineModel") } }
     @Published var quickModelID: String { didSet { d.set(quickModelID, forKey: "liveModel") } }
+    @Published var articleModelID: String { didSet { d.set(articleModelID, forKey: "articleModel") } }
     @Published var contextID: String { didSet { d.set(contextID, forKey: "context") } }
     @Published var styles: [String: String] { didSet { d.set(styles, forKey: "styles") } }
     @Published var voiceProfile: String { didSet { d.set(voiceProfile, forKey: "voiceProfile") } }
@@ -205,6 +209,7 @@ final class LexSettings: ObservableObject {
     init() {
         rewriteModelID = d.string(forKey: "refineModel") ?? ClaudeModel.sonnet.rawValue
         quickModelID = d.string(forKey: "liveModel") ?? ClaudeModel.haiku.rawValue
+        articleModelID = d.string(forKey: "articleModel") ?? ClaudeModel.opus.rawValue
         contextID = d.string(forKey: "context") ?? WritingContext.chat.rawValue
         styles = d.dictionary(forKey: "styles") as? [String: String] ?? [:]
         voiceProfile = d.string(forKey: "voiceProfile") ?? ""

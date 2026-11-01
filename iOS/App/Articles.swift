@@ -274,23 +274,34 @@ final class ArticleModel: ObservableObject {
 
     func summarize() {
         guard let article else { return }
-        run(Result(kind: .summary, title: "Summary"), parts: [article.text], instruction: RefineAction.articleSummary.instruction)
+        let model = Prefs.current.rewriteModel
+        run(Result(kind: .summary, title: "Summary"), parts: [article.text]) { part, _, _, onText in
+            try await LexEngine.claude.assist(text: part, instruction: RefineAction.articleSummary.instruction, model: model, onText: onText)
+        }
     }
 
-    /// The whole article, part by part (a long one is too much for one answer).
+    /// The whole article, part by part (a long one is too much for one answer), each part with
+    /// the whole article as context and the end of the part before.
     func translate() {
         guard let article else { return }
-        let action = RefineAction.articleTranslation(for: article.text)
-        run(Result(kind: .translation, title: action.label.replacingOccurrences(of: "To ", with: "In ")), parts: ArticleText.chunks(article.text),
-            instruction: action.instruction)
+        let target = Translation.target(for: article.text)
+        translate(article.text, title: article.title, into: target, as: "In \(target)")
     }
 
     /// The summary in the other language.
     func translateResult() {
-        guard let result, result.done, !result.text.isEmpty else { return }
-        let action = RefineAction.articleTranslation(for: result.text)
-        run(Result(kind: .translation, title: "Summary " + action.label.replacingOccurrences(of: "To ", with: "in ")), parts: [result.text],
-            instruction: action.instruction)
+        guard let result, result.done, !result.text.isEmpty, let article else { return }
+        let target = Translation.target(for: result.text)
+        translate(result.text, title: "Summary of \(article.title)", into: target, as: "Summary in \(target)")
+    }
+
+    private func translate(_ text: String, title: String, into target: String, as label: String) {
+        let parts = ArticleText.chunks(text, words: 1000)
+        let model = Prefs.articleModel
+        run(Result(kind: .translation, title: label), parts: parts) { part, i, before, onText in
+            try await LexEngine.claude.translateArticlePart(part, number: i + 1, of: parts.count, article: text, title: title,
+                                                            previous: ArticleText.tail(before), into: target, model: model, onText: onText)
+        }
     }
 
     func closeResult() {
@@ -300,20 +311,22 @@ final class ArticleModel: ObservableObject {
         result = nil
     }
 
-    private func run(_ start: Result, parts: [String], instruction: String) {
+    /// Writes the result part by part with `write` (the part, its index, what's written so far,
+    /// and a callback for the text as it streams in), showing it as it comes.
+    private func run(_ start: Result, parts: [String],
+                     write: @escaping (String, Int, String, @escaping (String) -> Void) async throws -> String) {
         workTask?.cancel()
         if reading != nil, reading != "Article" { stopReading() }
         result = start
         let id = UUID()
         runID = id
-        let model = Prefs.current.rewriteModel
         workTask = Task {
             var done = ""
             for (i, part) in parts.enumerated() {
                 if parts.count > 1 { result?.progress = "\(i + 1) of \(parts.count)" }
                 let before = done.isEmpty ? "" : done + "\n\n"
                 do {
-                    let text = try await LexEngine.claude.assist(text: part, instruction: instruction, model: model) { partial in
+                    let text = try await write(part, i, done) { partial in
                         Task { @MainActor [weak self] in
                             guard let self, self.runID == id, self.result?.done == false else { return }
                             self.result?.text = before + partial

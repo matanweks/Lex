@@ -1011,6 +1011,17 @@ final class ArticleTests: XCTestCase {
         XCTAssertNil(Article(extracted: ["url": "https://a.com", "text": "Too short to be an article."]))
     }
 
+    func testTranslatesPartByPartWithContext() {
+        let user = Prompts.translateUser(part: "Second part.", number: 2, of: 3, previous: "החלק הראשון.", into: "Hebrew")
+        XCTAssertTrue(user.contains("<previous_translation>החלק הראשון.</previous_translation>"))
+        XCTAssertTrue(user.contains("<part number=\"2\" of=\"3\">"))
+        XCTAssertFalse(Prompts.translateUser(part: "First.", number: 1, of: 3, previous: "", into: "Hebrew").contains("previous_translation"))
+        XCTAssertTrue(Prompts.translateSystem(into: "Hebrew").contains("Israeli"))
+        XCTAssertTrue(Prompts.translateContext(article: "Text", title: "A \"quoted\" title").hasPrefix("<article title=\"A 'quoted' title\">"))
+        let long = (1...5).map { "Paragraph \($0) " + String(repeating: "word ", count: 99) }.joined(separator: "\n\n")
+        XCTAssertEqual(ArticleText.tail(long, words: 250).components(separatedBy: "\n\n").count, 2)
+    }
+
     func testSplitsLongTextBetweenParagraphs() {
         let paragraph = String(repeating: "word ", count: 400).trimmingCharacters(in: .whitespaces)
         let chunks = ArticleText.chunks(Array(repeating: paragraph, count: 5).joined(separator: "\n\n"), words: 900)

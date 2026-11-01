@@ -75,6 +75,9 @@ struct SettingsView: View {
             Picker("Fixes and dictation", selection: $settings.quickModelID) {
                 ForEach(ClaudeModel.allCases) { Text($0.label).tag($0.rawValue) }
             }
+            Picker("Article translations", selection: $settings.articleModelID) {
+                ForEach(ClaudeModel.allCases) { Text($0.label).tag($0.rawValue) }
+            }
         } header: {
             Text("Claude")
         } footer: {

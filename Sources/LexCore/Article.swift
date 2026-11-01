@@ -114,6 +114,20 @@ public enum FxTwitter {
 }
 
 public enum ArticleText {
+    /// The last paragraphs of `text`, up to about `words` words: the end of the translation so
+    /// far, for the next part to continue from.
+    public static func tail(_ text: String, words: Int = 250) -> String {
+        var kept: [String] = []
+        var count = 0
+        for paragraph in text.components(separatedBy: "\n\n").reversed() where !paragraph.isEmpty {
+            let n = paragraph.split(whereSeparator: \.isWhitespace).count
+            if count > 0, count + n > words { break }
+            kept.insert(paragraph, at: 0)
+            count += n
+        }
+        return kept.joined(separator: "\n\n")
+    }
+
     /// The text in parts of about `words` words at most, split between paragraphs, so a long
     /// article can be translated part by part.
     public static func chunks(_ text: String, words: Int = 900) -> [String] {

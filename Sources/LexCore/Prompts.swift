@@ -44,6 +44,46 @@ public enum Prompts {
 
     public static func completeUser(before: String) -> String { "<typed>\(before)</typed>" }
 
+    /// For translating an article someone else wrote, to read or listen to. The whole article
+    /// follows in the system prompt as context; each request translates one part of it.
+    public static func translateSystem(into target: String) -> String {
+        let guide = target == "Hebrew" ? """
+        Write the Hebrew an experienced Israeli translator and editor would publish:
+        - Natural, contemporary Hebrew. Rebuild sentences in Hebrew word order and rhythm; never follow the English structure word for word. Split or join sentences when Hebrew reads better.
+        - Idioms, metaphors and wordplay: give the meaning with a natural Hebrew way of saying it, not a literal rendering.
+        - Professional and tech terms: use the words Israelis in the field actually say. Often that's the English loanword in Hebrew letters (סטארטאפ, פיצ'ר, דאטה, פרומפט) or, for products and tools, the English name itself. Don't invent Hebrew coinages nobody uses, and don't transliterate where a common Hebrew word exists.
+        - Names of people, companies and products: use the established Hebrew spelling when there is one (גוגל, אפל, מיקרוסופט); otherwise keep them in English letters.
+        - "You" addressed to readers in general: natural Hebrew (plural or impersonal), never slashes like ה/ית.
+        - Numbers, money and units the way Hebrew writes them ("$5 million" becomes "5 מיליון דולר").
+        """ : """
+        Write the English an experienced translator and editor would publish: natural, idiomatic American English with its own sentence rhythm, never word for word from the Hebrew. Give idioms and wordplay by meaning. Use the names people, companies and products go by in English. Keep Israeli terms that have no English equivalent and explain them only if the sentence is unclear without it.
+        """
+        return """
+        You translate articles into \(target) for a reader who will read them or listen to them read aloud. The full article is in <article> below, so you know what it's about, who says what, and the terms it uses; each message gives you one part of it to translate, and sometimes the end of your translation of the part before.
+
+        \(guide)
+
+        Always:
+        - Keep the meaning, facts, and the article's tone and register: a casual post stays casual, an essay stays an essay.
+        - Use the same translation for the same term or name throughout, and continue smoothly from the translation of the part before.
+        - Translate everything in the part: every paragraph, heading, list item and quote, in order, with the same paragraph breaks. Add nothing, drop nothing, summarize nothing, and add no notes.
+        - Keep URLs, code, @handles and #hashtags as they are.
+        - Reply with only the translation of the part.
+        """
+    }
+
+    public static func translateContext(article: String, title: String) -> String {
+        "<article title=\"\(title.replacingOccurrences(of: "\"", with: "'"))\">\n\(article)\n</article>"
+    }
+
+    public static func translateUser(part: String, number: Int, of count: Int, previous: String, into target: String) -> String {
+        var s = ""
+        if !previous.isEmpty { s += "<previous_translation>\(previous)</previous_translation>\n" }
+        s += "<part number=\"\(number)\" of=\"\(count)\">\n\(part)\n</part>\n"
+        s += "Translate this part into \(target)."
+        return s
+    }
+
     public static let refineSystem = """
     You rewrite text inside a writing assistant. The user picked a piece of their own writing and gave an instruction. Reply with only the rewritten text: no quotes, no preamble, no explanation, no alternatives.
 

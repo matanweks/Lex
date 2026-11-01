@@ -165,6 +165,39 @@ public final class ClaudeClient: @unchecked Sendable {
         return SentenceCompletion.clean(raw, before: before)
     }
 
+    /// Translates one part of an article (see `Prompts.translateSystem`), with the whole article as
+    /// context and the end of the part before. For quality rather than speed: more effort and
+    /// thinking than the live requests. The article is cached, so the parts after the first
+    /// don't pay for it again. `onText` gets the part's translation so far.
+    public func translateArticlePart(_ part: String, number: Int, of count: Int, article: String, title: String,
+                                     previous: String, into target: String, model: ClaudeModel,
+                                     onText: @escaping (String) -> Void) async throws -> String {
+        var body: [String: Any] = [
+            "model": model.rawValue,
+            "max_tokens": 32000,
+            "system": [
+                ["type": "text", "text": Prompts.translateSystem(into: target)],
+                ["type": "text", "text": Prompts.translateContext(article: article, title: title), "cache_control": ["type": "ephemeral"]],
+            ],
+            "messages": [["role": "user", "content": Prompts.translateUser(part: part, number: number, of: count, previous: previous, into: target)]],
+            "output_config": ["effort": "high"],
+        ]
+        var betas: [String] = []
+        if model == .haiku {
+            body["thinking"] = ["type": "disabled"]
+        } else {
+            body["thinking"] = ["type": "adaptive"]
+            body["fallbacks"] = "default"
+            betas.append("server-side-fallback-2026-07-01")
+        }
+        var full = ""
+        try await stream(body: body, betas: betas) { delta in
+            if let delta { full += delta } else { full = "" }
+            onText(full)
+        }
+        return full.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Streams a rewrite. `onText` gets the full text so far after every delta.
     public func refine(text: String, context: String, instruction: String, model: ClaudeModel,
                        style: String = "", voice: String = "", onText: @escaping (String) -> Void) async throws -> String {

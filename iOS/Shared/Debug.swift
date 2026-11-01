@@ -64,6 +64,11 @@ final class StubClaude: URLProtocol {
             // A sentence completion.
             return "see you there."
         }
+        if let open = user.range(of: "<part"), let start = user.range(of: ">", range: open.upperBound..<user.endIndex),
+           let close = user.range(of: "</part>", range: start.upperBound..<user.endIndex) {
+            // An article part to translate.
+            return "[translated] " + user[start.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         if let transcript = tag("transcript") {
             let tidy = transcript.replacingOccurrences(of: "um ", with: "").trimmingCharacters(in: .whitespaces)
             return tidy.prefix(1).uppercased() + tidy.dropFirst() + (tidy.hasSuffix(".") ? "" : ".")
