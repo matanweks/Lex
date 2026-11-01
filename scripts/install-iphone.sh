@@ -169,8 +169,9 @@ else
   done
 
   bold "Building Lex (team $team)…"
-  if ! xcodebuild -project "$root/iOS/Lex.xcodeproj" -scheme Lex -configuration Release -destination 'generic/platform=iOS' \
-    -derivedDataPath "$build" DEVELOPMENT_TEAM="$team" -allowProvisioningUpdates build >"$build.log" 2>&1; then
+  # Built for this very iPhone, so Xcode can register it with the team when it isn't yet.
+  if ! xcodebuild -project "$root/iOS/Lex.xcodeproj" -scheme Lex -configuration Release -destination "id=$device" \
+    -derivedDataPath "$build" DEVELOPMENT_TEAM="$team" -allowProvisioningUpdates -allowProvisioningDeviceRegistration build >"$build.log" 2>&1; then
     for profile in "$aside/"*; do [ -f "$profile" ] && mv "$profile" "$profiles/"; done
     if grep -q "No Accounts" "$build.log"; then
       # Xcode is signed out of your Apple Account, so Apple can't give new profiles. The ones
