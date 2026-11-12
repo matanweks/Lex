@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Carbon
+import CoreAudio
 import LexCore
 import Speech
 import SwiftUI
@@ -8,10 +9,18 @@ import SwiftUI
 // MARK: Microphone
 
 /// Captures the microphone as 16 kHz mono 16-bit audio, with a live level for the HUD.
+///
+/// Listens to the system's default input. The audio engine is built afresh when that changes
+/// (AirPods connecting, a USB mic) or when the engine reports a hardware change: an old engine
+/// can keep listening to a mic you've left, or stop partway, and then nothing you say arrives.
 final class Recorder {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
+    private var device = AudioDeviceID(0)
+    private var stale = false
+    private var recording = false
+    private var startedAt = Date()
+    private var observer: NSObjectProtocol?
     private let target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(PCM16.sampleRate), channels: 1, interleaved: true)!
-    private var converter: AVAudioConverter?
     private let lock = NSLock()
     private var buffer: [Int16] = []
     var onLevel: ((Float) -> Void)?
@@ -24,20 +33,90 @@ final class Recorder {
         AVCaptureDevice.requestAccess(for: .audio) { ok in DispatchQueue.main.async { done(ok) } }
     }
 
+    /// The mic it listens to, by name ("MacBook Pro Microphone").
+    var micName: String { Self.name(of: Self.defaultInput()) ?? "the microphone" }
+
     func start() throws {
         lock.lock(); buffer = []; lock.unlock()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        converter = AVAudioConverter(from: format, to: target)
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] b, _ in self?.process(b) }
+        startedAt = Date()
+        try listen()
+        recording = true
+    }
+
+    func stop() {
+        guard let engine else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        // Held a while and hardly any sound came through: start from a new engine next time.
+        let held = Date().timeIntervalSince(startedAt)
+        if recording, held > 1, Double(count) < held * Double(PCM16.sampleRate) / 4 { stale = true }
+        recording = false
+    }
+
+    private func listen() throws {
+        let input = Self.defaultInput()
+        if engine == nil || stale || input != device {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            if let old = engine {
+                old.inputNode.removeTap(onBus: 0)
+                old.stop()
+                Log.info("dictation: new audio engine for \(Self.name(of: input) ?? "?")")
+            }
+            let fresh = AVAudioEngine()
+            observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: fresh, queue: .main) { [weak self] _ in
+                self?.hardwareChanged()
+            }
+            engine = fresh
+            device = input
+            stale = false
+        }
+        guard let engine else { return }
+        let node = engine.inputNode
+        let format = node.outputFormat(forBus: 0)
+        // A mic that's still connecting has no format yet, and a tap on one would crash.
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw NoMicrophone() }
+        let converter = AVAudioConverter(from: format, to: target)
+        node.removeTap(onBus: 0)
+        node.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] b, _ in self?.process(b, with: converter) }
         engine.prepare()
         try engine.start()
     }
 
-    func stop() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+    /// The engine stops itself when its hardware changes. Mid-recording, carry on with the new
+    /// mic; otherwise build a new engine next time.
+    private func hardwareChanged() {
+        stale = true
+        guard recording else { return }
+        Log.info("dictation: the microphone changed while recording, now \(micName)")
+        do {
+            try listen()
+        } catch {
+            recording = false
+            Log.info("dictation: couldn't restart the microphone: \(error.localizedDescription)")
+        }
+    }
+
+    struct NoMicrophone: LocalizedError {
+        var errorDescription: String? { "no microphone is ready" }
+    }
+
+    private static func defaultInput() -> AudioDeviceID {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id)
+        return id
+    }
+
+    private static func name(of device: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = withUnsafeMutablePointer(to: &name) { AudioObjectGetPropertyData(device, &address, 0, nil, &size, $0) }
+        guard status == noErr, let name else { return nil }
+        return name.takeRetainedValue() as String
     }
 
     var count: Int { lock.lock(); defer { lock.unlock() }; return buffer.count }
@@ -48,7 +127,7 @@ final class Recorder {
         return start < stop ? Array(buffer[start..<stop]) : []
     }
 
-    private func process(_ input: AVAudioPCMBuffer) {
+    private func process(_ input: AVAudioPCMBuffer, with converter: AVAudioConverter?) {
         guard let converter else { return }
         let capacity = AVAudioFrameCount(Double(input.frameLength) * target.sampleRate / input.format.sampleRate + 32)
         guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
@@ -507,7 +586,7 @@ final class DictationController {
         } else {
             engineNow = settings.dictationEngine.resolved(keyboardLanguage: Self.keyboardLanguage(), appleAvailable: false)
         }
-        Log.info("dictation: listening with \(engineNow.rawValue) (keyboard \(Self.keyboardLanguage() ?? "?"))")
+        Log.info("dictation: listening with \(engineNow.rawValue) (keyboard \(Self.keyboardLanguage() ?? "?")) on \(recorder.micName)")
         model.levels = Array(repeating: 0, count: model.levels.count)
         stopLive()
         startLive(run: id)
@@ -610,13 +689,21 @@ final class DictationController {
         sentUpTo = 0
         engineNow = engine
         commandAtPress = false
+        pressedAt = Date().addingTimeInterval(-audio.seconds)
         complete(audio.samples, live: nil)
     }
 
     private func complete(_ all: [Int16], live session: AnyObject?) {
         let id = run
-        guard !PauseSegmenter.isSilent(all) else {
-            Log.info("dictation: nothing heard")
+        // Words already transcribed while you talked settle it, however quiet the mic.
+        guard !model.liveText.isEmpty || !PauseSegmenter.isSilent(all) else {
+            let mic = recorder.micName
+            let held = Date().timeIntervalSince(pressedAt)
+            let levels = PauseSegmenter.levels(all[...]).sorted()
+            let floor = levels.isEmpty ? 0 : levels[levels.count / 10]
+            Log.info("dictation: nothing heard from \(mic) (\(String(format: "%.1f", Double(all.count) / 16000)) s of audio in \(String(format: "%.1f", held)) s, background \(String(format: "%.4f", floor)), loudest \(String(format: "%.4f", levels.last ?? 0)))")
+            // Shorter is likely a slip of the key. Longer, you were talking: say why nothing came out.
+            if held >= 1 { Toast.show("Didn't hear anything from \(mic).") }
             if #available(macOS 26.0, *) { (session as? AppleLiveSession)?.cancel() }
             reset()
             return

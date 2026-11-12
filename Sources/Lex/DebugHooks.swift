@@ -167,6 +167,9 @@ final class DebugHooks {
             Task { await dictateTest(String(c.dropFirst("dictate:".count))) }
         case "pipeline-test":
             Task { await pipelineTest() }
+        case "dictate-silence":
+            // Types nothing: silence only shows the "didn't hear anything" message.
+            dictation?.simulate(PCM16(samples: Array(repeating: 0, count: 2 * PCM16.sampleRate)), engine: .apple)
         case "snippet-test-add":
             settings.snippets.removeAll { $0.trigger == ";lxt" }
             settings.snippets.append(Snippet(name: "lex test sign off", trigger: ";lxt", text: "Cheers, the Lex test"))

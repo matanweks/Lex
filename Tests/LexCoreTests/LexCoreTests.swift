@@ -409,6 +409,15 @@ final class DictationTests: XCTestCase {
         XCTAssertFalse(PauseSegmenter.isSilent(audio([(0.3, false), (1.0, true), (0.3, false)])))
     }
 
+    func testFaintSpeechIsNotSilence() {
+        // A built-in mic with its level turned down: speech at about -47 dBFS over faint noise.
+        let faint = audio([(0.3, false), (1.0, true), (0.3, false)]).map { abs(Int($0)) > 40 ? $0 / 40 : $0 }
+        XCTAssertFalse(PauseSegmenter.isSilent(faint))
+        // A mic that sends nothing at all, and steady louder room noise with no speech.
+        XCTAssertTrue(PauseSegmenter.isSilent(Array(repeating: 0, count: 32_000)))
+        XCTAssertTrue(PauseSegmenter.isSilent((0..<32_000).map { _ in Int16.random(in: -300...300) }))
+    }
+
     func testGoogleRequestAndTranscript() throws {
         let body = GoogleSTT.requestBody(audio: PCM16(samples: [1, 2, 3]), languages: ["en-US", "iw-IL"], phrases: ["Norvia", " "])
         let config = body["config"] as? [String: Any]

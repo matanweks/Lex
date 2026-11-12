@@ -135,13 +135,15 @@ public struct PauseSegmenter: Sendable {
         return nil
     }
 
-    /// True when there's hardly any speech in the audio (a stray tap of the key).
+    /// True when there's hardly any speech in the audio (a stray tap of the key): under a
+    /// quarter second well above the room's own noise. The fixed bar is low, since a
+    /// MacBook's built-in mic with its input level turned down hears speech faintly.
     public static func isSilent(_ samples: [Int16]) -> Bool {
         let lv = levels(samples[...])
         guard lv.count >= 8 else { return true }
         let sorted = lv.sorted()
         let floor = sorted[sorted.count / 10]
-        let loud = lv.filter { $0 > max(floor * 3, 0.02) }.count
+        let loud = lv.filter { $0 > max(floor * 3, 0.003) }.count
         return Double(loud) * 0.03 < 0.25
     }
 }
