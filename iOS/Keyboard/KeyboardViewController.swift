@@ -270,6 +270,11 @@ final class KeyboardModel: ObservableObject {
     @Published var micLanguage = UserDefaults.standard.string(forKey: "micLanguage") ?? "en" {
         didSet { UserDefaults.standard.set(micLanguage, forKey: "micLanguage") }
     }
+    /// The dictation is an instruction for the text (Say how), not words to type. Kept across
+    /// the trip to the app and back, like the request.
+    @Published private(set) var micEdits = UserDefaults.standard.bool(forKey: "micEdits") {
+        didSet { UserDefaults.standard.set(micEdits, forKey: "micEdits") }
+    }
     /// The dictation this keyboard asked for; kept across the trip to the app and back.
     private var micRequest: UUID? {
         get { UserDefaults.standard.string(forKey: "micRequest").flatMap(UUID.init) }
@@ -429,9 +434,31 @@ final class KeyboardModel: ObservableObject {
 
     // MARK: Dictation
 
+    /// Say how: you say what to change ("shorter", "in Hebrew", "add that I'm late"), and Lex
+    /// rewrites the selection, or what's before the cursor, that way.
+    func editByVoice() {
+        guard !isPrivate else { return show("Private mode is on: Lex isn't sending anything.") }
+        refresh()
+        guard target != nil else { return show("Select text, or put the cursor after what you wrote.") }
+        guard mic == .off else { return }
+        micEdits = true
+        startMic()
+    }
+
+    /// The instruction came back: run it on the text.
+    private func edit(as said: String) {
+        let said = said.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.isEmpty else { return show("Didn't catch what to change.") }
+        panel = .tools
+        tab = .lex
+        perform(.voiceEdit(said))
+    }
+
     func micTapped() {
         switch mic {
-        case .off: startMic()
+        case .off:
+            micEdits = false
+            startMic()
         case .listening:
             mic = .finishing
             VoiceLink.post(.stop)
@@ -446,6 +473,7 @@ final class KeyboardModel: ObservableObject {
     func cancelMic() {
         VoiceLink.post(.cancel)
         dropRequest()
+        micEdits = false
         mic = .off
     }
 
@@ -459,8 +487,8 @@ final class KeyboardModel: ObservableObject {
     private func startMic() {
         guard let controller else { return }
         micTimeout?.cancel()
-        let request = VoiceLink.Request(language: micLanguage, before: isPrivate ? "" : String(controller.before.suffix(300)),
-                                        privately: isPrivate ? true : nil)
+        let request = VoiceLink.Request(language: micLanguage, before: isPrivate || micEdits ? "" : String(controller.before.suffix(300)),
+                                        privately: isPrivate ? true : nil, instruction: micEdits ? true : nil)
         VoiceLink.request = request
         micRequest = request.id
         micText = ""
@@ -487,6 +515,7 @@ final class KeyboardModel: ObservableObject {
             guard mic == phase, micRequest == id else { return }
             // Still waiting for the mic: Lex mustn't start this one if it opens later.
             if phase == .opening { dropRequest() } else { micRequest = nil }
+            micEdits = false
             mic = .off
             show(message)
         }
@@ -514,13 +543,20 @@ final class KeyboardModel: ObservableObject {
         case .done:
             micRequest = nil
             mic = .off
-            if !state.text.isEmpty { type(state.text) }
+            if micEdits {
+                micEdits = false
+                edit(as: state.text)
+            } else if !state.text.isEmpty {
+                type(state.text)
+            }
         case .failed:
             micRequest = nil
+            micEdits = false
             mic = .off
             show(state.error ?? "Dictation didn't work.")
         case .ready:
             micRequest = nil
+            micEdits = false
             mic = .off
         }
     }

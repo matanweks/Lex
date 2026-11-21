@@ -309,10 +309,24 @@ struct KeyboardView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if model.hasKey {
-                Text(model.notice ?? targetLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(model.notice ?? targetLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button { model.editByVoice() } label: {
+                        Label("Say how", systemImage: "mic.fill")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Brand.indigo.opacity(0.15)))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Brand.indigo)
+                    .accessibilityLabel("Edit by voice: say how to change the text")
+                    .accessibilityIdentifier("kb-voice-edit")
+                }
             } else {
                 Text("Open the Lex app and add your Anthropic API key.")
                     .font(.callout)
@@ -492,7 +506,7 @@ struct KeyboardView: View {
     private var micStatus: String {
         switch model.mic {
         case .opening: return "Starting the mic…"
-        case .listening: return "Listening"
+        case .listening: return model.micEdits ? "Say how to change it" : "Listening"
         case .finishing: return "Writing it down…"
         case .off: return ""
         }
@@ -502,7 +516,8 @@ struct KeyboardView: View {
         if !model.micText.isEmpty { return model.micText }
         switch model.mic {
         case .opening: return "Lex opens for a moment to start the microphone. Then tap ◀ at the top left to come back here, and talk."
-        case .listening: return "Talk, then tap Done."
+        case .listening:
+            return model.micEdits ? "For example “shorter”, “more formal”, “in Hebrew” or “add that I'm running late”. Then tap Done." : "Talk, then tap Done."
         default: return ""
         }
     }

@@ -48,6 +48,13 @@ struct LexAction: Identifiable, Hashable {
         LexAction(.custom(instruction), symbol: "text.cursor")
     }
 
+    /// Edit by voice: what you said to do with the text, shown as the action's name.
+    static func voiceEdit(_ said: String) -> LexAction {
+        LexAction(RefineAction(id: "voice-edit", label: "“\(said)”",
+                               instruction: "Change the text the way I asked out loud (it came through speech recognition, so allow for a misheard word): \(said)"),
+                  symbol: "mic")
+    }
+
     /// For your own writing.
     static func forYourText(_ text: String) -> [LexAction] {
         [fix, improve, translate(text), shorter, clearer, friendlier, formal, direct, tone]

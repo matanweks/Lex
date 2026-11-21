@@ -28,6 +28,9 @@ enum VoiceLink {
         var before: String
         /// The keyboard is in private mode: transcribe on the phone, nothing to Claude.
         var privately: Bool? = nil
+        /// The words are an instruction for Lex (edit by voice): sent back as heard, not tidied,
+        /// and not kept in the clipboard history.
+        var instruction: Bool? = nil
     }
 
     enum Signal: String, CaseIterable {

@@ -213,6 +213,9 @@ final class VoiceSession: ObservableObject {
         limitTask = Task {
             try? await Task.sleep(for: .seconds(Self.longest))
             guard !Task.isCancelled, self.request?.id == id else { return }
+            // finish() cancels limitTask, which is this task: that would cancel its own speech
+            // and Claude calls, and the words would go in untidied.
+            self.limitTask = nil
             await self.finish()
         }
     }
@@ -252,17 +255,27 @@ final class VoiceSession: ObservableObject {
         }
         guard transcriber === live else { return }
         transcriber = nil
+        // Cancelled while it was written down: nothing goes to Claude, and its words are wiped.
+        guard cancelledID != request.id else { return wipe(request.id) }
         guard !silent, !raw.isEmpty else {
             return write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
         }
-        let text = await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
-        guard cancelledID != request.id else { return }
+        let isInstruction = request.instruction == true
+        let text = isInstruction ? raw : await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
+        guard cancelledID != request.id else { return wipe(request.id) }
         // Kept even if a newer dictation started while Claude tidied it: it can still be typed
         // from the history.
-        if request.privately != true { ClipboardLog.saveDictation(text) }
+        if request.privately != true, !isInstruction { ClipboardLog.saveDictation(text) }
         guard self.request?.id == request.id else { return }
         voiceLog.info("app finished: \(raw.count) chars heard, \(text.count) typed")
         write(.done, text: text)
+    }
+
+    /// Clears a cancelled dictation's words from the state the keyboard reads, unless a newer
+    /// dictation's state has replaced it.
+    private func wipe(_ id: UUID) {
+        guard request?.id == id else { return }
+        write(.ready)
     }
 
     /// The keyboard's Cancel: drops what was heard and keeps the mic ready.
