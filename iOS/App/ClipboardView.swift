@@ -158,7 +158,7 @@ struct ClipboardView: View {
             if let image = model.image(of: item) {
                 Image(uiImage: image).resizable().scaledToFill().frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
-                Image(systemName: item.kind == .link ? "link" : "text.alignleft")
+                Image(systemName: item.appID == ClipboardLog.dictationAppID ? "mic" : item.kind == .link ? "link" : "text.alignleft")
                     .foregroundStyle(Brand.indigo)
                     .frame(width: 22)
                     .padding(.top, 2)

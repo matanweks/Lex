@@ -512,7 +512,9 @@ struct KeyboardView: View {
     private var clipboard: some View {
         list(empty: "Nothing saved yet. What you copy shows up here when you open this tab or the Lex app.") {
             ForEach(model.clips) { item in
-                row(item.text, detail: item.date.formatted(.relative(presentation: .named)), pinned: item.pinned) {
+                let when = item.date.formatted(.relative(presentation: .named))
+                row(item.text, detail: item.appID == ClipboardLog.dictationAppID ? "\(when) · Dictation" : when, pinned: item.pinned,
+                    symbol: item.appID == ClipboardLog.dictationAppID ? "mic" : nil) {
                     model.type(model.text(of: item))
                 }
             }
@@ -546,7 +548,7 @@ struct KeyboardView: View {
         }
     }
 
-    private func row(_ text: String, detail: String, pinned: Bool, action: @escaping () -> Void) -> some View {
+    private func row(_ text: String, detail: String, pinned: Bool, symbol: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -555,6 +557,7 @@ struct KeyboardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 4) {
                     if pinned { Image(systemName: "pin.fill").foregroundStyle(Brand.orange) }
+                    if let symbol { Image(systemName: symbol) }
                     Text(detail)
                 }
                 .font(.caption2)

@@ -28,6 +28,16 @@ enum ClipboardLog {
         store().add(data(text: text), appID: Bundle.main.bundleIdentifier, appName: "Lex")
     }
 
+    /// Marks the keyboard's dictations in the history.
+    static let dictationAppID = "dev.lex.dictation"
+
+    /// Keeps a keyboard dictation's text, so one that didn't land (the keyboard closed while
+    /// Lex wrote it down, the phone locked, a call) can be typed again from the Clipboard tab.
+    static func saveDictation(_ text: String) {
+        guard Prefs.dictationHistory, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        store().add(data(text: text), appID: dictationAppID, appName: "Dictation")
+    }
+
     static func data(text: String) -> ClipData {
         [[ClipTypes.plainText: Data(text.utf8)]]
     }

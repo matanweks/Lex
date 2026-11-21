@@ -249,6 +249,9 @@ final class VoiceSession: ObservableObject {
             return write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
         }
         let text = await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
+        // Kept even if a newer dictation started while Claude tidied it: it can still be typed
+        // from the history.
+        if request.privately != true { ClipboardLog.saveDictation(text) }
         guard self.request?.id == request.id else { return }
         voiceLog.info("app finished: \(raw.count) chars heard, \(text.count) typed")
         write(.done, text: text)

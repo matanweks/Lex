@@ -435,7 +435,9 @@ final class KeyboardModel: ObservableObject {
         case .listening:
             mic = .finishing
             VoiceLink.post(.stop)
-            giveUp(after: 25, if: .finishing, "Lex didn't send the text back. Open Lex and try again.")
+            giveUp(after: 25, if: .finishing, Prefs.dictationHistory && !isPrivate
+                   ? "Lex didn't send the text back in time. When it's written down, it's in the Clipboard tab."
+                   : "Lex didn't send the text back. Open Lex and try again.")
         case .opening: controller?.openApp(VoiceLink.listenURL)
         case .finishing: break
         }
