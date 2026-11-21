@@ -443,12 +443,20 @@ final class KeyboardModel: ObservableObject {
 
     func cancelMic() {
         VoiceLink.post(.cancel)
-        micRequest = nil
+        dropRequest()
         mic = .off
+    }
+
+    /// Forgets the dictation asked for, so Lex can't start it later (if it opens late).
+    private func dropRequest() {
+        micTimeout?.cancel()
+        micRequest = nil
+        VoiceLink.request = nil
     }
 
     private func startMic() {
         guard let controller else { return }
+        micTimeout?.cancel()
         let request = VoiceLink.Request(language: micLanguage, before: isPrivate ? "" : String(controller.before.suffix(300)),
                                         privately: isPrivate ? true : nil)
         VoiceLink.request = request
@@ -475,7 +483,8 @@ final class KeyboardModel: ObservableObject {
         Task {
             try? await Task.sleep(for: .seconds(seconds))
             guard mic == phase, micRequest == id else { return }
-            micRequest = nil
+            // Still waiting for the mic: Lex mustn't start this one if it opens later.
+            if phase == .opening { dropRequest() } else { micRequest = nil }
             mic = .off
             show(message)
         }

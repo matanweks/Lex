@@ -33,6 +33,8 @@ final class VoiceSession: ObservableObject {
     private var readyUntil = Date.distantPast
     private var guards: [NSObjectProtocol] = []
     private var lastWrite = Date.distantPast
+    /// `begin()` is under way (the keyboard can open Lex twice while it asks for the mic).
+    private var starting = false
     #if DEBUG
     /// The running microphone is what keeps Lex awake in the background; with no microphone
     /// in test mode, silent audio does that instead.
@@ -54,6 +56,9 @@ final class VoiceSession: ObservableObject {
 
     /// Opened from the keyboard: hold the mic, and start on the keyboard's request.
     func begin() async {
+        guard !starting else { return }
+        starting = true
+        defer { starting = false }
         problem = nil
         if !isOn, !Self.simulated {
             guard await AVAudioApplication.requestRecordPermission() else {
@@ -64,6 +69,7 @@ final class VoiceSession: ObservableObject {
                 recorder.onChunk = { [feed] chunk in feed.current?.feed(chunk) }
                 try recorder.start(alongsideOtherAudio: true)
             } catch {
+                recorder.stop()
                 return fail("Couldn't start the microphone: \(error.localizedDescription)")
             }
         }
@@ -97,11 +103,11 @@ final class VoiceSession: ObservableObject {
         let center = NotificationCenter.default
         guards = [
             center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { _ in
-                Task { @MainActor in VoiceSession.shared.end() }
+                Task { @MainActor in VoiceSession.shared.stopNow() }
             },
             center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { note in
                 let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
-                if began { Task { @MainActor in VoiceSession.shared.end() } }
+                if began { Task { @MainActor in VoiceSession.shared.stopNow() } }
             },
             center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { _ in
                 Task { @MainActor in VoiceSession.shared.audioChanged() }
@@ -120,6 +126,12 @@ final class VoiceSession: ObservableObject {
         let category = AVAudioSession.sharedInstance().category
         guard !recorder.isRunning || (category != .playAndRecord && category != .record) else { return }
         voiceLog.info("the recorder stopped by itself")
+        stopNow()
+    }
+
+    /// The phone locked, a call came in, or the recorder stopped: the mic goes off now, and a
+    /// dictation under way is written down with what was heard so far.
+    private func stopNow() {
         if listening { Task { await finish(keepMic: false) } } else { end() }
     }
 
@@ -136,7 +148,15 @@ final class VoiceSession: ObservableObject {
             recorder.reset()
         }
         releaseMic()
-        if transcriber == nil { write(.ready) }
+        guard transcriber == nil else { return }
+        // A result the keyboard hasn't typed yet stays, for a keyboard still waiting for it.
+        if var state = VoiceLink.state, state.request == request?.id, state.phase == .done || state.phase == .failed {
+            state.readyUntil = .distantPast
+            VoiceLink.state = state
+            VoiceLink.post(.changed)
+        } else {
+            write(.ready)
+        }
     }
 
     /// Turns the microphone off. A transcriber that's finishing keeps what it was given.
@@ -166,12 +186,14 @@ final class VoiceSession: ObservableObject {
     }
 
     private func startListening() {
-        guard let request = VoiceLink.request, request.id != self.request?.id || !listening else { return }
+        // A request is heard once: one already finished or cancelled isn't started again.
+        guard let request = VoiceLink.request, request.id != self.request?.id else { return }
         idleTask?.cancel()
         transcriber?.cancel()
         self.request = request
         let live = LiveTranscriber()
-        live.onText = { text in VoiceSession.shared.heard(text) }
+        let id = request.id
+        live.onText = { text in VoiceSession.shared.heard(text, for: id) }
         live.start(language: request.language)
         transcriber = live
         recorder.reset()
@@ -181,7 +203,6 @@ final class VoiceSession: ObservableObject {
         listening = true
         write(.listening)
         limitTask?.cancel()
-        let id = request.id
         limitTask = Task {
             try? await Task.sleep(for: .seconds(Self.longest))
             guard !Task.isCancelled, self.request?.id == id else { return }
@@ -189,8 +210,8 @@ final class VoiceSession: ObservableObject {
         }
     }
 
-    private func heard(_ text: String) {
-        guard listening else { return }
+    private func heard(_ text: String, for id: UUID) {
+        guard listening, request?.id == id else { return }
         liveText = text
         // The keyboard reads this from the Keychain; a few updates a second is plenty.
         guard Date().timeIntervalSince(lastWrite) > 0.15 else { return }
@@ -212,18 +233,23 @@ final class VoiceSession: ObservableObject {
         let background = UIApplication.shared.beginBackgroundTask(withName: "Lex dictation")
         defer { UIApplication.shared.endBackgroundTask(background) }
         write(.finishing, text: liveText)
+        // A newer dictation can start while this one is written down (the keyboard gave up
+        // waiting, or was opened again): then this one's result goes nowhere.
         let raw: String
         do {
             raw = try await live.finish()
         } catch {
+            guard transcriber === live else { return }
             transcriber = nil
             return write(.failed, error: "Speech recognition didn't work (\(error.localizedDescription)). The first time, iPhone downloads its speech model: try again in a minute, online.")
         }
+        guard transcriber === live else { return }
         transcriber = nil
         guard !silent, !raw.isEmpty else {
             return write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
         }
         let text = await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
+        guard self.request?.id == request.id else { return }
         voiceLog.info("app finished: \(raw.count) chars heard, \(text.count) typed")
         write(.done, text: text)
     }
@@ -242,19 +268,21 @@ final class VoiceSession: ObservableObject {
         write(.ready)
     }
 
+    /// The mic didn't start: the keyboard waiting on its request shows why.
     private func fail(_ message: String) {
         problem = message
-        write(.failed, error: message)
+        write(.failed, error: message, for: VoiceLink.request?.id)
     }
 
-    private func write(_ phase: VoiceLink.State.Phase, text: String = "", error: String? = nil) {
+    /// `id`: the request this answers, the one being heard unless given.
+    private func write(_ phase: VoiceLink.State.Phase, text: String = "", error: String? = nil, for id: UUID? = nil) {
         lastWrite = Date()
         // `readyUntil` tells the keyboard the mic is ready, or the app is still working on its
         // dictation; once the mic is off and the text is done, the next dictation opens Lex.
         let until = listening ? Date().addingTimeInterval(Self.longest)
             : isOn ? readyUntil
             : phase == .finishing ? Date().addingTimeInterval(30) : .distantPast
-        VoiceLink.state = VoiceLink.State(phase: phase, text: text, error: error, request: request?.id, readyUntil: until)
+        VoiceLink.state = VoiceLink.State(phase: phase, text: text, error: error, request: id ?? request?.id, readyUntil: until)
         VoiceLink.post(.changed)
     }
 
