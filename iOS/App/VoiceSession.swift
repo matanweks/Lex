@@ -57,8 +57,9 @@ final class VoiceSession: ObservableObject {
         VoiceLink.post(.changed)
     }
 
-    /// Opened from the keyboard: hold the mic, and start on the keyboard's request.
-    func begin() async {
+    /// Opened from the keyboard: hold the mic, and start on the keyboard's request. With
+    /// `listen` off (the Action Button), only hold the mic, for the keyboard's next dictation.
+    func begin(listen: Bool = true) async {
         guard !starting else { return }
         starting = true
         defer { starting = false }
@@ -83,7 +84,7 @@ final class VoiceSession: ObservableObject {
         isOn = true
         // At least a minute for the keyboard's request, even with the setting off.
         keepReady(for: max(Self.readyFor, 60))
-        startListening()
+        if listen { startListening() } else { announceReady() }
     }
 
     /// Keeps the mic on, keeping nothing, until `seconds` from now unless a dictation starts.
@@ -133,9 +134,10 @@ final class VoiceSession: ObservableObject {
         stopNow()
     }
 
-    /// The phone locked, a call came in, or the recorder stopped: the mic goes off now, and a
-    /// dictation under way is written down with what was heard so far.
-    private func stopNow() {
+    /// The phone locked, a call came in, the recorder stopped, or Stop (the Live Activity, the
+    /// Action Button): the mic goes off now, and a dictation under way is written down with
+    /// what was heard so far.
+    func stopNow() {
         if listening { Task { await finish(keepMic: false) } } else { end() }
     }
 
@@ -153,9 +155,14 @@ final class VoiceSession: ObservableObject {
         }
         releaseMic()
         guard transcriber == nil else { return }
-        // A result the keyboard hasn't typed yet stays, for a keyboard still waiting for it.
+        announceReady()
+    }
+
+    /// Tells the keyboard whether the mic is ready (and until when). A result it hasn't typed
+    /// yet stays, for a keyboard still waiting for it.
+    private func announceReady() {
         if var state = VoiceLink.state, state.request == request?.id, state.phase == .done || state.phase == .failed {
-            state.readyUntil = .distantPast
+            state.readyUntil = isOn ? readyUntil : .distantPast
             VoiceLink.state = state
             VoiceLink.post(.changed)
         } else {
@@ -330,7 +337,7 @@ final class VoiceSession: ObservableObject {
 
     /// The Simulator has no speech models; with the Claude stub on, Lex "hears" a fixed
     /// sentence instead of opening the microphone.
-    private static var simulated: Bool {
+    static var simulated: Bool {
         #if DEBUG
         StubClaude.isOn
         #else

@@ -1,3 +1,4 @@
+import AVFoundation
 import AppIntents
 import LexCore
 import UIKit
@@ -34,11 +35,56 @@ enum LexActionChoice: String, AppEnum {
 
 enum LexIntentError: Error, CustomLocalizedStringResourceConvertible {
     case noText
+    case locked, noMicPermission, noLiveActivities, micFailed(String)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .noText: return "There's no text on the clipboard."
+        case .locked: return "Unlock your iPhone first: Lex keeps the mic off while it's locked."
+        case .noMicPermission: return "Open Lex and dictate once from its keyboard, to allow the microphone."
+        case .noLiveActivities: return "Allow Live Activities for Lex in Settings › Apps › Lex: iOS keeps the mic on in the background only while one shows."
+        case .micFailed(let why): return "\(why)"
         }
+    }
+}
+
+/// For the Action Button (or Shortcuts, Back Tap, Siri): turns the Lex keyboard's mic on, so
+/// dictations start right in the keyboard without the trip to Lex, even the first; or off when
+/// it's on. iOS lets an app start the mic from the background only for an audio-recording
+/// intent, and keeps it on only while a Live Activity shows.
+struct KeyboardMicIntent: AudioRecordingIntent {
+    static let title: LocalizedStringResource = "Turn the Keyboard Mic On or Off"
+    static let description = IntentDescription("Turns the Lex keyboard's mic on, so dictations start right in the keyboard, or off when it's on. Made for the Action Button.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        let voice = VoiceSession.shared
+        if voice.isOn {
+            voiceLog.info("mic button: turning the mic off")
+            voice.stopNow()
+            return .result()
+        }
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            voiceLog.info("mic button: locked")
+            throw LexIntentError.locked
+        }
+        guard VoiceSession.simulated || AVAudioApplication.shared.recordPermission == .granted else {
+            voiceLog.info("mic button: no mic permission")
+            throw LexIntentError.noMicPermission
+        }
+        // The Live Activity first, then the mic.
+        guard MicActivity.show(listening: false, until: Date().addingTimeInterval(max(VoiceSession.readyFor, 60))) else {
+            voiceLog.info("mic button: Live Activities are off")
+            throw LexIntentError.noLiveActivities
+        }
+        await voice.begin(listen: false)
+        guard voice.isOn else {
+            voiceLog.info("mic button: the mic didn't start")
+            MicActivity.end()
+            throw LexIntentError.micFailed(voice.problem ?? "The mic didn't start.")
+        }
+        voiceLog.info("mic button: the mic is on")
+        return .result()
     }
 }
 
@@ -119,5 +165,7 @@ struct LexShortcuts: AppShortcutsProvider {
                     shortTitle: "Translate Clipboard", systemImageName: "character.bubble")
         AppShortcut(intent: SummarizeClipboardIntent(), phrases: ["Summarize my clipboard with \(.applicationName)"],
                     shortTitle: "Summarize Clipboard", systemImageName: "text.append")
+        AppShortcut(intent: KeyboardMicIntent(), phrases: ["Turn on the \(.applicationName) mic", "Turn off the \(.applicationName) mic"],
+                    shortTitle: "Keyboard Mic", systemImageName: "mic")
     }
 }

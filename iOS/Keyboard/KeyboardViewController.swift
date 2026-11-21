@@ -439,16 +439,25 @@ final class KeyboardModel: ObservableObject {
     func editByVoice() {
         guard !isPrivate else { return show("Private mode is on: Lex isn't sending anything.") }
         refresh()
-        guard target != nil else { return show("Select text, or put the cursor after what you wrote.") }
+        guard let target else { return show("Select text, or put the cursor after what you wrote.") }
         guard mic == .off else { return }
         micEdits = true
+        // What to change, so the instruction is only run on that text, even if the keyboard
+        // is in another field by the time it comes back.
+        UserDefaults.standard.set(target.text.original, forKey: "micEditsText")
         startMic()
     }
 
     /// The instruction came back: run it on the text.
     private func edit(as said: String) {
         let said = said.trimmingCharacters(in: .whitespacesAndNewlines)
+        let meant = UserDefaults.standard.string(forKey: "micEditsText")
+        UserDefaults.standard.removeObject(forKey: "micEditsText")
         guard !said.isEmpty else { return show("Didn't catch what to change.") }
+        refresh()
+        guard let target, target.text.original == meant else {
+            return show("The text changed. Select it and tap Say how again.")
+        }
         panel = .tools
         tab = .lex
         perform(.voiceEdit(said))
@@ -543,7 +552,10 @@ final class KeyboardModel: ObservableObject {
         case .done:
             micRequest = nil
             mic = .off
-            if micEdits {
+            // An instruction when the request said so (the flag is only a fallback).
+            let request = VoiceLink.request
+            let isEdit = request?.id == id ? request?.instruction == true : micEdits
+            if isEdit {
                 micEdits = false
                 edit(as: state.text)
             } else if !state.text.isEmpty {

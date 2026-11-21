@@ -96,6 +96,11 @@ struct LexApp: App {
             // The Lex keyboard wants to dictate: start the mic while Lex is in front.
             showListening = true
             Task { await voice.begin() }
+        #if DEBUG
+        case "debug-mic-button":
+            // Test support: what the Action Button does (the Simulator can't run App Shortcuts).
+            Task { _ = try? await KeyboardMicIntent().perform() }
+        #endif
         case "write":
             if let text = query.first(where: { $0.name == "text" })?.value {
                 compose.text = text
