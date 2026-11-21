@@ -11,7 +11,7 @@
 # it's paired.
 #
 # --auto-renew on adds a launchd job that runs this every two hours with --if-due: it does
-# nothing until Lex has less than two days left, then installs as soon as it finds the phone
+# nothing until Lex has less than four days left, then installs as soon as it finds the phone
 # unlocked, and shows a notification when Lex is about to stop working. It logs to
 # ~/Library/Logs/Lex-iPhone.log. The job runs this file, so keep the repository where it is.
 #
@@ -97,7 +97,7 @@ PLIST
         launchctl bootstrap "gui/$(id -u)" "$agent"
         bold "Lex will renew itself on your iPhone."
         if [ -f "$build.expires" ]; then
-          echo "The install works until $(when "$(cat "$build.expires")"); from two days before, the Mac renews it the first time it finds the iPhone unlocked."
+          echo "The install works until $(when "$(cat "$build.expires")"); from four days before, the Mac renews it the first time it finds the iPhone unlocked."
         fi
         echo "It checks every two hours while you're logged in. To stop: scripts/install-iphone.sh --auto-renew off"
         exit 0 ;;
@@ -113,8 +113,8 @@ esac
 
 if [ "$mode" = due ]; then
   left=$(( $(cat "$build.expires" 2>/dev/null || echo 0) - $(date +%s) ))
-  # Quiet until two days are left.
-  [ "$left" -lt $(( 2 * day )) ] || exit 0
+  # Quiet until four days are left, so any day you use the Mac in the second half of the week will do.
+  [ "$left" -lt $(( 4 * day )) ] || exit 0
   bold "Lex has $(( left / 3600 )) hours left on the iPhone; renewing."
 fi
 
@@ -171,9 +171,15 @@ else
   done
 
   bold "Building Lex (team $team)…"
-  # Built for this very iPhone, so Xcode can register it with the team when it isn't yet.
-  if ! xcodebuild -project "$root/iOS/Lex.xcodeproj" -scheme Lex -configuration Release -destination "id=$device" \
-    -derivedDataPath "$build" DEVELOPMENT_TEAM="$team" -allowProvisioningUpdates -allowProvisioningDeviceRegistration build >"$build.log" 2>&1; then
+  build_lex() {
+    xcodebuild -project "$root/iOS/Lex.xcodeproj" -scheme Lex -configuration Release -derivedDataPath "$build" \
+      DEVELOPMENT_TEAM="$team" -allowProvisioningUpdates "$@" build >"$build.log" 2>&1
+  }
+  # For any iPhone, so the build doesn't need the phone connected. Only when the team has no
+  # registered device (after re-adding the Apple Account in Xcode) is it built for this very
+  # iPhone, which registers it.
+  if ! build_lex -destination 'generic/platform=iOS' \
+    && ! { grep -q "has no devices" "$build.log" && build_lex -destination "id=$device" -allowProvisioningDeviceRegistration; }; then
     for profile in "$aside/"*; do [ -f "$profile" ] && mv "$profile" "$profiles/"; done
     if grep -q "No Accounts" "$build.log"; then
       # Xcode is signed out of your Apple Account, so Apple can't give new profiles. The ones
