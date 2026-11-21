@@ -41,8 +41,15 @@ final class Recorder {
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Unless reading aloud has taken the audio meanwhile: that keeps playing.
+        let session = AVAudioSession.sharedInstance()
+        if session.category == .playAndRecord || session.category == .record {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
+
+    /// False once iOS stopped it: another audio category, or a headset came or went.
+    var isRunning: Bool { engine.isRunning }
 
     var samples: [Int16] { lock.lock(); defer { lock.unlock() }; return buffer }
 
@@ -64,6 +71,8 @@ final class Recorder {
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
         if collecting { lock.lock(); buffer.append(contentsOf: chunk); lock.unlock() }
         onChunk?(chunk)
+        // No meter (the keyboard's mic, ready in the background): no wake-ups for it.
+        guard onLevel != nil else { return }
         var sum: Float = 0
         for s in chunk { let f = Float(s) / 32768; sum += f * f }
         let level = (sum / Float(chunk.count)).squareRoot()

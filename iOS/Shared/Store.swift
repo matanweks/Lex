@@ -173,6 +173,9 @@ struct Prefs {
     /// The model for translating articles (the Read tab): the best by default, since it's for reading.
     static var articleModel: ClaudeModel { ClaudeModel(rawValue: SharedDefaults.standard.string(forKey: "articleModel") ?? "") ?? .opus }
 
+    /// Minutes the keyboard's mic stays ready after a dictation (0: off right away).
+    static var micReadyMinutes: Int { SharedDefaults.standard.object(forKey: "micReadyMinutes") as? Int ?? 5 }
+
     /// Just the model for quick work, without reading every setting.
     static var quickModel: ClaudeModel { ClaudeModel(rawValue: SharedDefaults.standard.string(forKey: "liveModel") ?? "") ?? .haiku }
 
@@ -200,6 +203,7 @@ final class LexSettings: ObservableObject {
     @Published var dictationPolish: Bool { didSet { d.set(dictationPolish, forKey: "dictationPolish") } }
     @Published var dictationTranslateHebrew: Bool { didSet { d.set(dictationTranslateHebrew, forKey: "dictationTranslateHebrew") } }
     @Published var dictationWords: String { didSet { d.set(dictationWords, forKey: "dictationWords") } }
+    @Published var micReadyMinutes: Int { didSet { d.set(micReadyMinutes, forKey: "micReadyMinutes") } }
     @Published var clipboardOnOpen: Bool { didSet { d.set(clipboardOnOpen, forKey: "clipboardOnOpen") } }
     @Published var clipboardDays: Int { didSet { d.set(clipboardDays, forKey: "clipboardDays") } }
     @Published var snippets: [Snippet] { didSet { d.set(try? JSONEncoder().encode(snippets), forKey: "snippets") } }
@@ -220,6 +224,7 @@ final class LexSettings: ObservableObject {
         dictationPolish = d.object(forKey: "dictationPolish") as? Bool ?? true
         dictationTranslateHebrew = d.bool(forKey: "dictationTranslateHebrew")
         dictationWords = d.string(forKey: "dictationWords") ?? ""
+        micReadyMinutes = Prefs.micReadyMinutes
         clipboardOnOpen = d.object(forKey: "clipboardOnOpen") as? Bool ?? true
         clipboardDays = d.object(forKey: "clipboardDays") as? Int ?? 30
         snippets = Prefs.snippets(d)

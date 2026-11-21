@@ -171,10 +171,16 @@ struct SettingsView: View {
             Toggle("Hebrew speech comes out in English", isOn: $settings.dictationTranslateHebrew)
             TextField("Names and terms, comma-separated", text: $settings.dictationWords, axis: .vertical)
                 .lineLimit(1...4)
+            Picker("Keep the mic ready", selection: $settings.micReadyMinutes) {
+                Text("Off").tag(0)
+                Text("1 minute").tag(1)
+                Text("5 minutes").tag(5)
+                Text("15 minutes").tag(15)
+            }
         } header: {
             Text("Dictation")
         } footer: {
-            Text("Apple's on-device speech hears you, free and private. Claude then removes fillers and false starts and fixes punctuation, keeping your words.")
+            Text("Apple's on-device speech hears you, free and private. Claude then removes fillers and false starts and fixes punctuation, keeping your words.\n\nAfter you dictate from the Lex keyboard, the mic stays on this long, keeping nothing (the orange dot shows it), so the next dictation starts without opening Lex. Locking the phone turns it off.")
         }
     }
 

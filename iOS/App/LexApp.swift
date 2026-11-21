@@ -47,19 +47,7 @@ struct LexApp: App {
                 }
             }
             .tint(Brand.indigo)
-            .safeAreaInset(edge: .top) {
-                if voice.isOn && !showListening {
-                    Button { showListening = true } label: {
-                        Label("The keyboard's mic is on", systemImage: "mic.fill")
-                            .font(.footnote.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(Brand.orange.opacity(0.18)))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .modifier(ExpiryAccessory())
+            .modifier(NoticeAccessory(micOn: voice.isOn && !showListening) { showListening = true })
             .fullScreenCover(isPresented: $showListening) {
                 ListeningView(session: voice) { showListening = false }
             }

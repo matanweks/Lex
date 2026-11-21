@@ -77,16 +77,47 @@ struct ExpiryBanner: View {
     }
 }
 
-/// Puts the notice over the tab bar, where it doesn't cover any tab's own buttons (iOS 26.1 and
-/// later; before that the notifications and Settings say it).
-struct ExpiryAccessory: ViewModifier {
+/// That the keyboard's mic is on (tap for the mic screen, with Stop the Mic), or else that Lex
+/// stops opening soon, over the tab bar, where it doesn't cover any tab's own buttons (iOS 26.1
+/// and later; before that the mic notice sits at the top, and the notifications and Settings
+/// tell of the end).
+struct NoticeAccessory: ViewModifier {
+    let micOn: Bool
+    let openMic: () -> Void
+
     func body(content: Content) -> some View {
         if #available(iOS 26.1, *) {
-            content.tabViewBottomAccessory(isEnabled: InstallExpiry.endsSoon) {
-                if let date = InstallExpiry.date { ExpiryBanner(date: date) }
+            content.tabViewBottomAccessory(isEnabled: micOn || InstallExpiry.endsSoon) {
+                if micOn {
+                    MicBanner(action: openMic)
+                } else if let date = InstallExpiry.date {
+                    ExpiryBanner(date: date)
+                }
             }
         } else {
-            content
+            content.safeAreaInset(edge: .top) {
+                if micOn { MicBanner(action: openMic) }
+            }
         }
+    }
+}
+
+struct MicBanner: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "mic.fill").foregroundStyle(Brand.orange)
+                Text("The keyboard's mic is on")
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            }
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("mic-banner")
     }
 }

@@ -4,14 +4,18 @@ import SwiftUI
 
 /// The app's side of the keyboard's mic. The keyboard opens Lex (lex://listen) to start the
 /// microphone, which iOS only allows while Lex is in front, and Lex keeps it running in the
-/// background while you dictate. The mic goes off the moment you tap Done or Cancel, as soon
-/// as iOS says the phone is locked, on a phone call, and after two minutes of listening.
+/// background. After a dictation it stays on for a few minutes (Settings › Dictation), keeping
+/// nothing, so the next one starts right from the keyboard without opening Lex, as Wispr Flow
+/// and Granola do. The mic goes off when that time is up, when you tap Stop the Mic, as soon
+/// as iOS says the phone is locked, on a phone call, and when something else takes the audio.
 /// Audio is kept only between the keyboard's start and stop.
 @MainActor
 final class VoiceSession: ObservableObject {
     static let shared = VoiceSession()
     /// The longest dictation: then Lex types what it heard and lets go of the mic.
     static let longest: TimeInterval = 120
+    /// How long the mic stays ready after a dictation; 0 turns it off the moment you finish.
+    static var readyFor: TimeInterval { TimeInterval(Prefs.micReadyMinutes * 60) }
 
     @Published private(set) var isOn = false
     @Published private(set) var listening = false
@@ -24,6 +28,9 @@ final class VoiceSession: ObservableObject {
     private var request: VoiceLink.Request?
     private var listener: VoiceLink.Listener?
     private var limitTask: Task<Void, Never>?
+    private var idleTask: Task<Void, Never>?
+    /// When the mic goes off if no dictation starts before.
+    private var readyUntil = Date.distantPast
     private var guards: [NSObjectProtocol] = []
     private var lastWrite = Date.distantPast
     #if DEBUG
@@ -65,11 +72,27 @@ final class VoiceSession: ObservableObject {
         #endif
         if !isOn { watchForLockAndCalls() }
         isOn = true
+        // At least a minute for the keyboard's request, even with the setting off.
+        keepReady(for: max(Self.readyFor, 60))
         startListening()
     }
 
+    /// Keeps the mic on, keeping nothing, until `seconds` from now unless a dictation starts.
+    private func keepReady(for seconds: TimeInterval) {
+        idleTask?.cancel()
+        guard seconds > 0 else { return releaseMic() }
+        readyUntil = Date().addingTimeInterval(seconds)
+        idleTask = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, !self.listening else { return }
+            voiceLog.info("mic ready time is up")
+            self.end()
+        }
+    }
+
     /// The mic closes when the phone locks (iOS tells apps when its protected data goes away,
-    /// within seconds of locking) and when a call or another app takes the audio.
+    /// within seconds of locking), when a call or another app takes the audio, and when the
+    /// recorder stops by itself.
     private func watchForLockAndCalls() {
         let center = NotificationCenter.default
         guards = [
@@ -80,18 +103,40 @@ final class VoiceSession: ObservableObject {
                 let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
                 if began { Task { @MainActor in VoiceSession.shared.end() } }
             },
+            center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { _ in
+                Task { @MainActor in VoiceSession.shared.audioChanged() }
+            },
+            center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { _ in
+                Task { @MainActor in VoiceSession.shared.audioChanged() }
+            },
         ]
     }
 
-    /// Lets go of the mic and tells the keyboard.
+    /// Reading aloud in Lex, or a headset coming or going, can stop the recorder without a
+    /// word. Then the mic is let go, so the next dictation opens Lex and starts it afresh
+    /// instead of hearing nothing; a dictation under way keeps what it heard.
+    private func audioChanged() {
+        guard isOn, !Self.simulated else { return }
+        let category = AVAudioSession.sharedInstance().category
+        guard !recorder.isRunning || (category != .playAndRecord && category != .record) else { return }
+        voiceLog.info("the recorder stopped by itself")
+        if listening { Task { await finish(keepMic: false) } } else { end() }
+    }
+
+    /// Lets go of the mic and tells the keyboard. A dictation still being heard is dropped;
+    /// one already being written down finishes.
     func end() {
         guard isOn else { return }
-        transcriber?.cancel()
-        transcriber = nil
-        feed.current = nil
-        listening = false
+        if listening {
+            transcriber?.cancel()
+            transcriber = nil
+            feed.current = nil
+            listening = false
+            recorder.collecting = false
+            recorder.reset()
+        }
         releaseMic()
-        write(.ready)
+        if transcriber == nil { write(.ready) }
     }
 
     /// Turns the microphone off. A transcriber that's finishing keeps what it was given.
@@ -100,6 +145,8 @@ final class VoiceSession: ObservableObject {
         for observer in guards { NotificationCenter.default.removeObserver(observer) }
         guards = []
         limitTask?.cancel()
+        idleTask?.cancel()
+        readyUntil = .distantPast
         if !Self.simulated { recorder.stop() }
         #if DEBUG
         keepAwake?.stop()
@@ -120,6 +167,7 @@ final class VoiceSession: ObservableObject {
 
     private func startListening() {
         guard let request = VoiceLink.request, request.id != self.request?.id || !listening else { return }
+        idleTask?.cancel()
         transcriber?.cancel()
         self.request = request
         let live = LiveTranscriber()
@@ -149,16 +197,18 @@ final class VoiceSession: ObservableObject {
         write(.listening, text: text)
     }
 
-    private func finish() async {
+    /// `keepMic` false turns the mic off now, whatever the setting.
+    private func finish(keepMic: Bool = true) async {
         guard listening, let live = transcriber, let request else { return }
         limitTask?.cancel()
         listening = false
         recorder.collecting = false
         feed.current = nil
         let silent = !Self.simulated && PauseSegmenter.isSilent(recorder.samples)
-        // The mic goes off now. Writing the text down takes a moment more, which iOS allows
-        // an app in the background as a background task.
-        releaseMic()
+        recorder.reset()
+        // The mic stays ready for the next dictation (or goes off now). Writing the text down
+        // takes a moment more, which iOS allows an app in the background as a background task.
+        if keepMic { keepReady(for: Self.readyFor) } else { releaseMic() }
         let background = UIApplication.shared.beginBackgroundTask(withName: "Lex dictation")
         defer { UIApplication.shared.endBackgroundTask(background) }
         write(.finishing, text: liveText)
@@ -178,10 +228,18 @@ final class VoiceSession: ObservableObject {
         write(.done, text: text)
     }
 
+    /// The keyboard's Cancel: drops what was heard and keeps the mic ready.
     private func cancel() {
         guard listening else { return }
+        limitTask?.cancel()
+        transcriber?.cancel()
+        transcriber = nil
+        feed.current = nil
+        listening = false
         recorder.collecting = false
-        end()
+        recorder.reset()
+        keepReady(for: Self.readyFor)
+        write(.ready)
     }
 
     private func fail(_ message: String) {
@@ -191,9 +249,11 @@ final class VoiceSession: ObservableObject {
 
     private func write(_ phase: VoiceLink.State.Phase, text: String = "", error: String? = nil) {
         lastWrite = Date()
-        // `readyUntil` tells the keyboard the app is still working on its dictation; once the
-        // mic is off and the text is done, the next dictation opens Lex again.
-        let until = isOn ? Date().addingTimeInterval(Self.longest) : phase == .finishing ? Date().addingTimeInterval(30) : .distantPast
+        // `readyUntil` tells the keyboard the mic is ready, or the app is still working on its
+        // dictation; once the mic is off and the text is done, the next dictation opens Lex.
+        let until = listening ? Date().addingTimeInterval(Self.longest)
+            : isOn ? readyUntil
+            : phase == .finishing ? Date().addingTimeInterval(30) : .distantPast
         VoiceLink.state = VoiceLink.State(phase: phase, text: text, error: error, request: request?.id, readyUntil: until)
         VoiceLink.post(.changed)
     }
@@ -256,7 +316,7 @@ struct ListeningView: View {
             if let problem = session.problem {
                 Text(problem).foregroundStyle(.red).multilineTextAlignment(.center)
             } else {
-                Text("Go back to where you were typing: tap ◀ at the top left of the screen. Your words show up in the Lex keyboard.")
+                Text("Go back to where you were typing: tap ◀ at the top left of the screen, or swipe right along the bottom edge. Your words show up in the Lex keyboard.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }
@@ -268,7 +328,9 @@ struct ListeningView: View {
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
             }
             Spacer()
-            Text("Lex turns the mic off as soon as you tap Done or Cancel, and when you lock the phone.")
+            Text(VoiceSession.readyFor > 0
+                 ? "The mic stays on for \(Int(VoiceSession.readyFor / 60)) min after you dictate, keeping nothing, so the next dictation starts right from the keyboard. Locking the phone turns it off."
+                 : "Lex turns the mic off as soon as you tap Done or Cancel, and when you lock the phone.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
