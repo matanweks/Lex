@@ -35,6 +35,8 @@ enum VoiceLink {
         case stop = "dev.lex.voice.stop"
         case cancel = "dev.lex.voice.cancel"
         case changed = "dev.lex.voice.changed"
+        /// The Live Activity's Stop button (StopMicIntent posts the same name).
+        case micOff = "dev.lex.voice.micoff"
     }
 
     static let listenURL = URL(string: "lex://listen")!

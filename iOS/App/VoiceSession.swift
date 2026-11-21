@@ -35,6 +35,8 @@ final class VoiceSession: ObservableObject {
     private var lastWrite = Date.distantPast
     /// `begin()` is under way (the keyboard can open Lex twice while it asks for the mic).
     private var starting = false
+    /// A dictation the keyboard cancelled while it was being written down: dropped, not kept.
+    private var cancelledID: UUID?
     #if DEBUG
     /// The running microphone is what keeps Lex awake in the background; with no microphone
     /// in test mode, silent audio does that instead.
@@ -42,13 +44,14 @@ final class VoiceSession: ObservableObject {
     #endif
 
     private init() {
-        listener = VoiceLink.Listener([.start, .stop, .cancel]) { signal in
+        listener = VoiceLink.Listener([.start, .stop, .cancel, .micOff]) { signal in
             Task { @MainActor in VoiceSession.shared.handle(signal) }
         }
     }
 
     /// At launch: a dictation from before Lex last quit can't finish, so tell the keyboard.
     func clearLeftovers() {
+        if !isOn { MicActivity.end() }
         guard !isOn, let state = VoiceLink.state, state.phase == .listening || state.phase == .finishing || state.readyUntil > Date() else { return }
         VoiceLink.state = VoiceLink.State(phase: .ready, request: state.request, readyUntil: .distantPast)
         VoiceLink.post(.changed)
@@ -88,6 +91,7 @@ final class VoiceSession: ObservableObject {
         idleTask?.cancel()
         guard seconds > 0 else { return releaseMic() }
         readyUntil = Date().addingTimeInterval(seconds)
+        MicActivity.show(listening: false, until: readyUntil)
         idleTask = Task {
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled, !self.listening else { return }
@@ -167,6 +171,7 @@ final class VoiceSession: ObservableObject {
         limitTask?.cancel()
         idleTask?.cancel()
         readyUntil = .distantPast
+        MicActivity.end()
         if !Self.simulated { recorder.stop() }
         #if DEBUG
         keepAwake?.stop()
@@ -180,7 +185,8 @@ final class VoiceSession: ObservableObject {
         switch signal {
         case .start: if isOn { startListening() }
         case .stop: Task { await finish() }
-        case .cancel: cancel()
+        case .cancel: if listening { cancel() } else { cancelledID = request?.id }
+        case .micOff: stopNow()
         case .changed: break
         }
     }
@@ -201,6 +207,7 @@ final class VoiceSession: ObservableObject {
         feed.current = live
         liveText = ""
         listening = true
+        MicActivity.show(listening: true, until: Date().addingTimeInterval(Self.longest))
         write(.listening)
         limitTask?.cancel()
         limitTask = Task {
@@ -249,6 +256,7 @@ final class VoiceSession: ObservableObject {
             return write(.failed, error: "Didn't catch that. Try again a little closer to the mic.")
         }
         let text = await DictationTidy.finish(raw, before: request.before, useClaude: request.privately != true)
+        guard cancelledID != request.id else { return }
         // Kept even if a newer dictation started while Claude tidied it: it can still be typed
         // from the history.
         if request.privately != true { ClipboardLog.saveDictation(text) }
@@ -360,7 +368,7 @@ struct ListeningView: View {
             }
             Spacer()
             Text(VoiceSession.readyFor > 0
-                 ? "The mic stays on for \(Int(VoiceSession.readyFor / 60)) min after you dictate, keeping nothing, so the next dictation starts right from the keyboard. Locking the phone turns it off."
+                 ? "The mic stays on for \(Int(VoiceSession.readyFor / 60)) min after you dictate, keeping nothing, so the next dictation starts right from the keyboard. Stop it from the Dynamic Island; locking the phone turns it off too."
                  : "Lex turns the mic off as soon as you tap Done or Cancel, and when you lock the phone.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
