@@ -111,10 +111,11 @@ final class Typist: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let start = Date()
             for language in KeyboardLanguage.allCases {
+                // The next words' file is mapped, not read: it's searched where it lies.
                 guard let words = Bundle.main.url(forResource: language.rawValue, withExtension: "words").flatMap({ try? String(contentsOf: $0, encoding: .utf8) }),
-                      let next = Bundle.main.url(forResource: language.rawValue, withExtension: "next").flatMap({ try? String(contentsOf: $0, encoding: .utf8) })
+                      let next = Bundle.main.url(forResource: language.rawValue, withExtension: "next").flatMap({ try? Data(contentsOf: $0, options: .alwaysMapped) })
                 else { continue }
-                let lexicon = Lexicon(wordsFile: words, nextFile: next)
+                let lexicon = Lexicon(wordsFile: words, sortedNextFile: next)
                 await MainActor.run {
                     lexicons[language] = lexicon
                     NotificationCenter.default.post(name: lexiconsLoadedNote, object: nil)
@@ -146,7 +147,8 @@ final class Typist: ObservableObject {
         let word = TypingRules.currentWord(text)
         guard !word.isEmpty else { return }
         let start = TypingRules.startsSentence(String(text.dropLast(word.count)))
-        words.learn(word, after: start ? nil : Predictor.previousWord(text), atSentenceStart: start)
+        let previous = start ? [] : Predictor.previousWords(text)
+        words.learn(word, after: previous.first, earlier: previous.dropFirst().first, atSentenceStart: start)
         unsaved += 1
         if unsaved >= 15 { saveWords() }
     }
@@ -320,7 +322,8 @@ final class Typist: ObservableObject {
         guard controller?.correctsText == true else { return [] }
         let word = TypingRules.currentWord(before)
         let start = TypingRules.startsSentence(String(before.dropLast(word.count)))
-        let previous = start ? nil : Predictor.previousWord(before)
+        let previousWords = start ? [] : Predictor.previousWords(before)
+        let previous = previousWords.first
         var system: [String] = []
         var guesses: [String] = []
         let lang = language.checkerCode
@@ -335,7 +338,7 @@ final class Typist: ObservableObject {
         let list = lexicon(for: word.isEmpty ? previous ?? "" : word)
         if !word.isEmpty, let fix = TypingRules.hebrewCorrection(for: word, lexicon: list) { guesses.insert(fix, at: 0) }
         if !word.isEmpty, let phrase = replacements[word.lowercased()] { guesses.insert(phrase, at: 0) }
-        var picks = Predictor.suggestions(prefix: word, previous: previous, atSentenceStart: start, system: system, guesses: guesses,
+        var picks = Predictor.suggestions(prefix: word, previous: previous, earlier: previousWords.dropFirst().first, atSentenceStart: start, system: system, guesses: guesses,
                                           model: words, seed: .for(language), lexicon: list, names: names)
         if !word.isEmpty, word.first?.isUppercase == true { picks = picks.map { TypingRules.matchCase($0, to: word) } }
         guard !word.isEmpty else {

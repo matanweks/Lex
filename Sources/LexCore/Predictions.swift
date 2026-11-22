@@ -9,26 +9,59 @@ public struct WordModel: Codable, Equatable, Sendable {
     public private(set) var words: [String: Int] = [:]
     /// Previous word ("" at a sentence start) → next word → count.
     public private(set) var pairs: [String: [String: Int]] = [:]
+    /// The two words before ("see you") → next word → count.
+    public private(set) var triples: [String: [String: Int]] = [:]
     /// How a word is written when it isn't all lowercase ("Dana", "iPhone").
     public private(set) var forms: [String: String] = [:]
+    /// For a word in `forms`: the times you wrote it that way after another word, less the
+    /// times you wrote it in lowercase. Below zero, the form is forgotten.
+    private var capitals: [String: Int] = [:]
 
     public static let maxWords = 20_000
     public static let maxPairs = 40_000
+    public static let maxTriples = 20_000
 
     public init() {}
 
+    private enum CodingKeys: String, CodingKey { case words, pairs, triples, forms, capitals }
+
+    /// Reads what older versions of Lex saved too.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        words = try c.decodeIfPresent([String: Int].self, forKey: .words) ?? [:]
+        pairs = try c.decodeIfPresent([String: [String: Int]].self, forKey: .pairs) ?? [:]
+        triples = try c.decodeIfPresent([String: [String: Int]].self, forKey: .triples) ?? [:]
+        forms = try c.decodeIfPresent([String: String].self, forKey: .forms) ?? [:]
+        capitals = try c.decodeIfPresent([String: Int].self, forKey: .capitals) ?? [:]
+    }
+
     public var isEmpty: Bool { words.isEmpty }
 
-    /// Learns `word`, typed after `previous` (nil at the start of a sentence).
-    public mutating func learn(_ word: String, after previous: String?, atSentenceStart: Bool) {
+    /// Learns `word`, typed after `previous` and `earlier` (the word before that). `previous`
+    /// is nil at the start of a sentence, and when what came before isn't a word (an emoji,
+    /// a number, a quote).
+    public mutating func learn(_ word: String, after previous: String?, earlier: String? = nil, atSentenceStart: Bool) {
         let lower = word.lowercased()
         guard Self.isWord(lower) else { return }
         words[lower, default: 0] += 1
-        pairs[previous?.lowercased() ?? "", default: [:]][lower, default: 0] += 1
-        // A capital mid-sentence means a name or brand: keep it as written.
-        if word != lower, !atSentenceStart || word.dropFirst().contains(where: \.isUppercase) { forms[lower] = word }
-        if words.count > Self.maxWords + Self.maxWords / 10 { prune() }
+        if previous != nil || atSentenceStart { pairs[previous?.lowercased() ?? "", default: [:]][lower, default: 0] += 1 }
+        if let previous, let earlier { triples[Self.key(previous, earlier), default: [:]][lower, default: 0] += 1 }
+        if word == lower {
+            // Written in lowercase: maybe the capital isn't always meant.
+            if forms[lower] != nil {
+                let left = (capitals[lower] ?? 0) - 1
+                if left < 0 { forms[lower] = nil; capitals[lower] = nil } else { capitals[lower] = left }
+            }
+        } else if word.dropFirst().contains(where: \.isUppercase) || (previous != nil && !atSentenceStart) {
+            // A capital right after a word means a name or brand ("Dana"), and so does one
+            // inside a word ("iPhone"). After an emoji or a quote it may only start a sentence.
+            forms[lower] = word
+            capitals[lower, default: 0] += 1
+        }
+        if words.count > Self.maxWords + Self.maxWords / 10 || triples.count > Self.maxTriples + Self.maxTriples / 10 { prune() }
     }
+
+    static func key(_ previous: String, _ earlier: String) -> String { earlier.lowercased() + " " + previous.lowercased() }
 
     /// A word you kept as typed (put back after autocorrect, or tapped as typed): it's yours
     /// from now on, so it isn't corrected again.
@@ -47,6 +80,10 @@ public struct WordModel: Codable, Equatable, Sendable {
         pairs[previous?.lowercased() ?? ""]?[word.lowercased()] ?? 0
     }
 
+    public func count(_ word: String, after previous: String, earlier: String) -> Int {
+        triples[Self.key(previous, earlier)]?[word.lowercased()] ?? 0
+    }
+
     /// Words you typed that start with `prefix` (lowercased).
     public func words(startingWith prefix: String) -> [(word: String, count: Int)] {
         let p = prefix.lowercased()
@@ -58,16 +95,29 @@ public struct WordModel: Codable, Equatable, Sendable {
         (pairs[previous?.lowercased() ?? ""] ?? [:]).map { ($0.key, $0.value) }.sorted { $0.count > $1.count }
     }
 
-    /// Keeps the words and pairs you use most.
+    /// The words you usually type after `earlier` `previous`.
+    public func next(after previous: String, earlier: String) -> [(word: String, count: Int)] {
+        (triples[Self.key(previous, earlier)] ?? [:]).map { ($0.key, $0.value) }.sorted { $0.count > $1.count }
+    }
+
+    /// Keeps the words, pairs and triples you use most.
     mutating func prune() {
-        let keep = Set(words.sorted { $0.value > $1.value }.prefix(Self.maxWords).map(\.key))
-        words = words.filter { keep.contains($0.key) }
-        forms = forms.filter { keep.contains($0.key) }
-        let all = pairs.flatMap { previous, nexts in nexts.map { (previous, $0.key, $0.value) } }
-        guard all.count > Self.maxPairs else { return }
+        if words.count > Self.maxWords {
+            let keep = Set(words.sorted { $0.value > $1.value }.prefix(Self.maxWords).map(\.key))
+            words = words.filter { keep.contains($0.key) }
+            forms = forms.filter { keep.contains($0.key) }
+            capitals = capitals.filter { keep.contains($0.key) }
+        }
+        pairs = Self.top(pairs, Self.maxPairs)
+        triples = Self.top(triples, Self.maxTriples)
+    }
+
+    private static func top(_ table: [String: [String: Int]], _ limit: Int) -> [String: [String: Int]] {
+        let all = table.flatMap { before, nexts in nexts.map { (before, $0.key, $0.value) } }
+        guard all.count > limit else { return table }
         var kept: [String: [String: Int]] = [:]
-        for (previous, next, count) in all.sorted(by: { $0.2 > $1.2 }).prefix(Self.maxPairs) { kept[previous, default: [:]][next] = count }
-        pairs = kept
+        for (before, next, count) in all.sorted(by: { $0.2 > $1.2 }).prefix(limit) { kept[before, default: [:]][next] = count }
+        return kept
     }
 
     /// Letters (any script), with an apostrophe or hyphen inside: no numbers, links or codes.
@@ -83,7 +133,7 @@ public struct WordModel: Codable, Equatable, Sendable {
 public struct WordSeed: Sendable {
     /// Common words, most used first.
     public let common: [String]
-    /// Likely next words after a word.
+    /// Likely next words after a word, or after two ("see you").
     public let next: [String: [String]]
     /// Likely first words of a message.
     public let starters: [String]
@@ -146,6 +196,16 @@ public struct WordSeed: Sendable {
             "all": ["the", "good", "right", "of"], "as": ["well", "soon", "a", "the"],
             "about": ["the", "it", "this", "that"], "there": ["is", "are", "was"],
             "happy": ["to", "birthday"], "my": ["phone", "best", "own", "mind"],
+            // Messages' phrases, which the word list's example sentences rarely have.
+            "see you": ["soon", "later", "tomorrow", "there"], "to you": ["soon", "later"],
+            "talk to": ["you"], "on my": ["way"], "i'm on": ["my", "it"], "let me": ["know"],
+            "have a": ["good", "great", "nice"], "a great": ["day", "time", "weekend"],
+            "a good": ["day", "time", "one", "night"], "are you": ["free", "around", "ok", "coming", "sure"],
+            "thank you": ["so", "for", "very"], "thanks for": ["the", "your", "letting"],
+            "can you": ["send", "please", "help", "call", "check"], "i will": ["send", "be", "check", "let"],
+            "what time": ["is", "do", "are"], "how was": ["your", "it", "the"], "how's": ["it", "your", "the"],
+            "sounds good": ["to"], "good to": ["know", "hear", "see"], "in a": ["bit", "few", "minute"],
+            "be there": ["in", "soon", "at"], "running late": ["sorry"], "i'm running": ["late"],
         ],
         starters: ["I", "The", "Thanks", "Hi", "Can", "We"])
 
@@ -175,8 +235,9 @@ public struct WordSeed: Sendable {
 /// you've typed a space. Your own words and your contacts' names come first, then the word
 /// list's, the spelling checker's and the built-in hints.
 public enum Predictor {
-    /// Best first. `names` are your contacts' names, lowercased → as written.
-    public static func suggestions(prefix: String, previous: String?, atSentenceStart: Bool,
+    /// Best first. `earlier` is the word before `previous`. `names` are your contacts' names,
+    /// lowercased → as written.
+    public static func suggestions(prefix: String, previous: String?, earlier: String? = nil, atSentenceStart: Bool,
                                    system: [String], guesses: [String], model: WordModel, seed: WordSeed,
                                    lexicon: Lexicon = .empty, names: [String: String] = [:], limit: Int = 3) -> [String] {
         var scores: [String: Double] = [:]
@@ -188,18 +249,35 @@ public enum Predictor {
         let p = prefix.lowercased()
         // The sentence start's next words are the ones sentences usually begin with.
         let after = previous?.lowercased() ?? ""
+        // The two words before say more than one: "like to" → do, go, be.
+        let two = previous.flatMap { previous in earlier.map { (previous, $0) } }
+        let afterTwo = two.map { WordModel.key($0.0, $0.1) }
         if p.isEmpty {
-            for (i, (word, count)) in model.next(after: previous).prefix(12).enumerated() { add(word, 4 * log(1 + Double(count)) + 1 - Double(i) * 0.05) }
-            for (i, word) in (seed.next[after] ?? []).enumerated() { add(word, 3 - Double(i) * 0.3) }
+            if let two {
+                for (i, (word, count)) in model.next(after: two.0, earlier: two.1).prefix(12).enumerated() { add(word, 4 * log(1 + Double(count)) + 2 - Double(i) * 0.05) }
+            }
+            if let afterTwo {
+                for (i, word) in (seed.next[afterTwo] ?? []).enumerated() { add(word, 3.6 - Double(i) * 0.3) }
+                for (i, word) in (lexicon.next[afterTwo] ?? []).enumerated() { add(word, 3.4 - Double(i) * 0.3) }
+            }
+            // When the two words before are known, the last one alone counts for less.
+            let one = scores.isEmpty ? 1 : 0.3
+            for (i, (word, count)) in model.next(after: previous).prefix(12).enumerated() { add(word, one * (4 * log(1 + Double(count)) + 1 - Double(i) * 0.05)) }
+            for (i, word) in (seed.next[after] ?? []).enumerated() { add(word, one * (3 - Double(i) * 0.3)) }
             // The word list's sentence starters come from example sentences, not messages: a hint only.
             let weight = after.isEmpty ? 1.6 : 2.6
-            for (i, word) in (lexicon.next[after] ?? []).enumerated() { add(word, weight - Double(i) * 0.25) }
+            for (i, word) in (lexicon.next[after] ?? []).enumerated() { add(word, one * (weight - Double(i) * 0.25)) }
             if previous == nil || atSentenceStart { for (i, word) in seed.starters.enumerated() { add(word, 2.5 - Double(i) * 0.3) } }
         } else {
             for (word, count) in model.words(startingWith: p) {
-                add(word, 2 * log(1 + Double(count)) + 4 * log(1 + Double(model.count(word, after: previous))))
+                let afterTwo = two.map { model.count(word, after: $0.0, earlier: $0.1) } ?? 0
+                add(word, 2 * log(1 + Double(count)) + 4 * log(1 + Double(model.count(word, after: previous))) + 4 * log(1 + Double(afterTwo)))
             }
             for (lower, _) in names where lower.hasPrefix(p) { add(lower, 3.2) }
+            if let afterTwo {
+                for (i, word) in (seed.next[afterTwo] ?? []).enumerated() where word.lowercased().hasPrefix(p) { add(word, 3.3 - Double(i) * 0.2) }
+                for (i, word) in (lexicon.next[afterTwo] ?? []).enumerated() where word.hasPrefix(p) { add(word, 3.2 - Double(i) * 0.2) }
+            }
             for (i, word) in (seed.next[after] ?? []).enumerated() where word.lowercased().hasPrefix(p) { add(word, 3 - Double(i) * 0.2) }
             for (i, word) in (lexicon.next[after] ?? []).enumerated() where word.hasPrefix(p) { add(word, 2.8 - Double(i) * 0.2) }
             for (word, _) in lexicon.completions(p, limit: 10) { add(word, 2.6 * lexicon.commonness(word)) }
@@ -215,10 +293,22 @@ public enum Predictor {
             for (i, word) in seed.common.prefix(limit * 3).enumerated() where scores[word.lowercased()] == nil { add(word, 0.2 - Double(i) * 0.01) }
         }
         let best = scores.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(limit).map(\.key)
+        let common = Set(seed.common.map { $0.lowercased() })
         return best.map { word in
-            let shown = names[word] ?? (model.form(of: word) != word ? model.form(of: word) : seedForm(word, seed))
+            let shown = form(of: word, model: model, seed: seed, common: common, lexicon: lexicon, names: names)
             return atSentenceStart || prefix.first?.isUppercase == true ? shown.prefix(1).uppercased() + shown.dropFirst() : shown
         }
+    }
+
+    /// How a suggested word is written: a contact's name or a word you capitalise as you do
+    /// ("Dana", "iPhone"), but a common word stays lowercase even if a contact or a slip
+    /// capitalised it ("will", not "Will"; "the", not "The"), unless it's "I".
+    static func form(of word: String, model: WordModel, seed: WordSeed, common: Set<String>, lexicon: Lexicon, names: [String: String]) -> String {
+        func onlyCapitalised(_ form: String) -> Bool { form == form.prefix(1).uppercased() + word.dropFirst() }
+        if let name = names[word], !(onlyCapitalised(name) && (common.contains(word) || lexicon.commonness(word) >= 0.5)) { return name }
+        let learned = model.form(of: word)
+        if learned != word, !(onlyCapitalised(learned) && common.contains(word)) { return learned }
+        return seedForm(word, seed)
     }
 
     /// The hints keep "I" and names capitalised.
@@ -234,12 +324,26 @@ public enum Predictor {
 
     /// The word before the one being typed, or nil at the start of a sentence (or of the text).
     public static func previousWord(_ before: String) -> String? {
-        let current = TypingRules.currentWord(before)
-        let rest = before.dropLast(current.count)
-        let trimmed = rest.reversed().drop { $0 == " " }
-        guard let last = trimmed.first, last.isLetter || last == "'" || last == "’" else { return nil }
-        let word = String(String(trimmed).prefix { $0.isLetter || $0 == "'" || $0 == "’" }.reversed())
-        return word.isEmpty ? nil : word
+        previousWords(before, count: 1).first
+    }
+
+    /// The words before the one being typed, nearest first, up to `count`: back to the start
+    /// of the sentence, a comma, or anything else that isn't a word.
+    public static func previousWords(_ before: String, count: Int = 2) -> [String] {
+        func isWordCharacter(_ c: Character) -> Bool { c.isLetter || c == "'" || c == "’" }
+        var rest = Substring(before.dropLast(TypingRules.currentWord(before).count))
+        var found: [String] = []
+        while found.count < count {
+            let trimmed = rest.reversed().drop { $0 == " " }
+            guard let last = trimmed.first, isWordCharacter(last) else { break }
+            let word = String(String(trimmed.prefix(while: isWordCharacter)).reversed())
+            // A word with a digit in it ("mp3") isn't one to predict from.
+            let start = rest.index(rest.endIndex, offsetBy: -(rest.reversed().prefix { $0 == " " }.count + word.count))
+            if start > rest.startIndex, let before = rest[..<start].last, before.isNumber { break }
+            found.append(word)
+            rest = rest[..<start]
+        }
+        return found
     }
 }
 

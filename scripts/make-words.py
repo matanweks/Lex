@@ -4,8 +4,10 @@
     python3 scripts/make-words.py [folder for the downloads]
 
   .words  one word per line with how common it is ("word<TAB>count"), most common first
-  .next   a word and the words that most often follow it ("word<TAB>next next ..."); the
-          line for "" lists the words sentences usually start with
+  .next   a word, or two words, and the words that most often follow ("word<TAB>next next ...",
+          "word word<TAB>next next ..."); the line for "" lists the words sentences usually
+          start with. Sorted by the key's UTF-8 bytes, so the keyboard can look a key up in
+          the file without reading it all into memory.
 
 Sources (downloaded into the folder if they aren't there yet):
   - Tatoeba sentences, CC BY 2.0 FR (https://tatoeba.org): everyday English and Hebrew
@@ -76,8 +78,9 @@ def normalize(text, lang):
 
 
 def count(path, lang):
-    """Word counts, and for each word the counts of the words that follow it."""
-    words, pairs = collections.Counter(), collections.defaultdict(collections.Counter)
+    """Word counts, for each word the counts of the words that follow it, and for each two
+    words the counts of the words that follow them ("like to" → do, go, be)."""
+    words, pairs, triples = collections.Counter(), collections.defaultdict(collections.Counter), collections.defaultdict(collections.Counter)
     for sentence in sentences(path):
         start = True
         for run in BREAK.split(normalize(sentence, lang)):
@@ -89,11 +92,13 @@ def count(path, lang):
                 pairs[""][tokens[0]] += 1
             for a, b in zip(tokens, tokens[1:]):
                 pairs[a][b] += 1
+            for a, b, c in zip(tokens, tokens[1:], tokens[2:]):
+                triples[a + " " + b][c] += 1
             start = False
-    return words, pairs
+    return words, pairs, triples
 
 
-def write(lang, words, pairs, keep_words, keep_next, min_pair):
+def write(lang, words, pairs, triples, keep_words, keep_next, min_pair, keep_after_two, min_triple):
     for w, n in RARER.items():
         if w in words:
             words[w] //= n
@@ -102,34 +107,48 @@ def write(lang, words, pairs, keep_words, keep_next, min_pair):
     with open(os.path.join(OUT, f"{lang}.words"), "w", encoding="utf-8") as f:
         for w, c in vocab:
             f.write(f"{w}\t{c}\n")
-    lines = 0
+
+    def likeliest(counter, least, keep):
+        return [w for w, c in counter.most_common()
+                if c >= least and w in known and not is_tatoeba_name(w, lang) and w not in RARER][:keep]
+
+    lines = {}
+    for prev in [""] + [w for w, _ in vocab]:
+        nexts = likeliest(pairs.get(prev, collections.Counter()), min_pair, keep_next)
+        if nexts:
+            lines[prev] = nexts
+    singles = len(lines)
+    for two, counter in triples.items():
+        a, b = two.split(" ")
+        if a not in known or b not in known or is_tatoeba_name(a, lang) or is_tatoeba_name(b, lang) or sum(counter.values()) < 2 * min_triple:
+            continue
+        nexts = likeliest(counter, min_triple, keep_after_two)
+        # Only where two words say more than the last one does.
+        if nexts and nexts[:3] != lines.get(b, [])[:3]:
+            lines[two] = nexts
     with open(os.path.join(OUT, f"{lang}.next"), "w", encoding="utf-8") as f:
-        for prev in [""] + [w for w, _ in vocab]:
-            nexts = [w for w, c in pairs.get(prev, collections.Counter()).most_common()
-                     if c >= min_pair and w in known and not is_tatoeba_name(w, lang) and w not in RARER]
-            if nexts:
-                f.write(prev + "\t" + " ".join(nexts[:keep_next]) + "\n")
-                lines += 1
-    print(f"{lang}: {len(vocab)} words, next words for {lines}")
+        for key in sorted(lines, key=lambda k: k.encode("utf-8")):
+            f.write(key + "\t" + " ".join(lines[key]) + "\n")
+    print(f"{lang}: {len(vocab)} words, next words for {singles} words and {len(lines) - singles} pairs")
 
 
 def main():
     files = fetch(sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "build", "word-sources"))
     os.makedirs(OUT, exist_ok=True)
 
-    words, pairs = count(files["eng_sentences.tsv.bz2"], "en")
-    write("en", words, pairs, keep_words=40_000, keep_next=6, min_pair=3)
+    words, pairs, triples = count(files["eng_sentences.tsv.bz2"], "en")
+    write("en", words, pairs, triples, keep_words=40_000, keep_next=10, min_pair=3, keep_after_two=6, min_triple=5)
 
     # Hebrew: how common each word is from subtitles (far more text than Tatoeba has in
     # Hebrew), which word follows which from Tatoeba.
-    _, pairs = count(files["heb_sentences.tsv.bz2"], "he")
+    _, pairs, triples = count(files["heb_sentences.tsv.bz2"], "he")
     words = collections.Counter()
     for line in open(files["he_50k.txt"], encoding="utf-8"):
         word, _, n = line.strip().rpartition(" ")
         word = normalize(word, "he")
         if WORD["he"].fullmatch(word):
             words[word] += int(n)
-    write("he", words, pairs, keep_words=50_000, keep_next=6, min_pair=2)
+    write("he", words, pairs, triples, keep_words=50_000, keep_next=10, min_pair=2, keep_after_two=6, min_triple=3)
 
 
 if __name__ == "__main__":

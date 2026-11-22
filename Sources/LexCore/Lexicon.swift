@@ -8,14 +8,19 @@ public struct Lexicon: Sendable {
     private let sorted: [String]
     private let sortedCounts: [Int]
     private let counts: [String: Int]
-    /// Word ("" for the start of a sentence) → the words that most often follow it, likeliest first.
-    public let next: [String: [String]]
+    /// Word ("" for the start of a sentence), or two words ("like to"), → the words that most
+    /// often follow, likeliest first.
+    public let next: NextWords
     /// The most common word's count, to compare the others with.
     public let topCount: Int
 
     public static let empty = Lexicon(words: [], next: [:])
 
     public init(words: [(String, Int)], next: [String: [String]]) {
+        self.init(words: words, next: NextWords(next))
+    }
+
+    public init(words: [(String, Int)], next: NextWords) {
         var counts: [String: Int] = [:]
         for (word, count) in words { counts[word.lowercased(), default: 0] += count }
         let sorted = counts.keys.sorted()
@@ -26,18 +31,23 @@ public struct Lexicon: Sendable {
         self.topCount = max(counts.values.max() ?? 1, 1)
     }
 
-    /// From the files: "word<TAB>count" lines, and "word<TAB>next next …" lines.
+    /// From the files: "word<TAB>count" lines, and "word<TAB>next next …" lines in any order.
     public init(wordsFile: String, nextFile: String) {
+        self.init(wordsFile: wordsFile, next: NextWords(file: nextFile))
+    }
+
+    /// The keyboard's files: the next words' file is sorted (scripts/make-words.py) and read
+    /// as it's needed, not all at once.
+    public init(wordsFile: String, sortedNextFile: Data) {
+        self.init(wordsFile: wordsFile, next: NextWords(sortedFile: sortedNextFile))
+    }
+
+    private init(wordsFile: String, next: NextWords) {
         var words: [(String, Int)] = []
         words.reserveCapacity(50_000)
         for line in wordsFile.split(separator: "\n") {
             guard let tab = line.firstIndex(of: "\t"), let count = Int(line[line.index(after: tab)...]) else { continue }
             words.append((String(line[..<tab]), count))
-        }
-        var next: [String: [String]] = [:]
-        for line in nextFile.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let tab = line.firstIndex(of: "\t") else { continue }
-            next[String(line[..<tab])] = line[line.index(after: tab)...].split(separator: " ").map(String.init)
         }
         self.init(words: words, next: next)
     }
@@ -80,6 +90,83 @@ public struct Lexicon: Sendable {
             i += 1
         }
         return found
+    }
+}
+
+/// The words that usually follow a word or two, looked up in the word list's "key<TAB>next
+/// next …" lines. The lines are sorted by the key's UTF-8 bytes and searched where they lie,
+/// so a big file costs the keyboard little memory (iOS stops keyboards that use much).
+public struct NextWords: Sendable {
+    private let table: Data
+
+    /// Lines sorted by key, as scripts/make-words.py writes them. The data can be mapped from
+    /// the file.
+    public init(sortedFile: Data) {
+        table = sortedFile
+    }
+
+    /// Lines in any order.
+    public init(file: String) {
+        let lines = file.split(separator: "\n", omittingEmptySubsequences: true).filter { $0.contains("\t") }
+        self.init(lines.map { line in
+            let tab = line.firstIndex(of: "\t")!
+            return (String(line[..<tab]), line[line.index(after: tab)...].split(separator: " ").map(String.init))
+        })
+    }
+
+    public init(_ next: [String: [String]]) {
+        self.init(next.map { ($0.key, $0.value) })
+    }
+
+    private init(_ entries: [(String, [String])]) {
+        var seen = Set<String>()
+        let unique = entries.filter { seen.insert($0.0).inserted }
+        let sorted = unique.sorted { Array($0.0.utf8).lexicographicallyPrecedes(Array($1.0.utf8)) }
+        table = Data(sorted.map { "\($0.0)\t\($0.1.joined(separator: " "))\n" }.joined().utf8)
+    }
+
+    public var isEmpty: Bool { table.isEmpty }
+
+    private static let tab = UInt8(ascii: "\t"), newline = UInt8(ascii: "\n"), space = UInt8(ascii: " ")
+
+    /// The words after `key` ("" for a sentence's first words), likeliest first.
+    public subscript(key: String) -> [String]? {
+        let wanted = Array(key.utf8)
+        return table.withUnsafeBytes { raw -> [String]? in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            var low = 0, high = bytes.count
+            while low < high {
+                var start = (low + high) / 2
+                while start > low, bytes[start - 1] != Self.newline { start -= 1 }
+                var end = start
+                while end < bytes.count, bytes[end] != Self.tab, bytes[end] != Self.newline { end += 1 }
+                let order = Self.compare(bytes, start..<end, wanted)
+                if order == 0 {
+                    guard end < bytes.count, bytes[end] == Self.tab else { return [] }
+                    var stop = end + 1
+                    while stop < bytes.count, bytes[stop] != Self.newline { stop += 1 }
+                    return UnsafeBufferPointer(rebasing: bytes[(end + 1)..<stop]).split(separator: Self.space).map { String(decoding: $0, as: UTF8.self) }
+                }
+                if order < 0 {
+                    while end < bytes.count, bytes[end] != Self.newline { end += 1 }
+                    low = end + 1
+                } else {
+                    high = start
+                }
+            }
+            return nil
+        }
+    }
+
+    private static func compare(_ bytes: UnsafeBufferPointer<UInt8>, _ range: Range<Int>, _ wanted: [UInt8]) -> Int {
+        var i = range.lowerBound, j = 0
+        while i < range.upperBound, j < wanted.count {
+            if bytes[i] != wanted[j] { return bytes[i] < wanted[j] ? -1 : 1 }
+            i += 1
+            j += 1
+        }
+        if i == range.upperBound { return j == wanted.count ? 0 : -1 }
+        return 1
     }
 }
 

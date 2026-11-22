@@ -807,6 +807,78 @@ final class PredictionTests: XCTestCase {
         XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "מצורף", atSentenceStart: false, system: [], guesses: [], model: model, seed: .hebrew).count, 3)
     }
 
+    func testDoesNotLearnACapitalThatOnlyStartsASentence() {
+        var model = WordModel()
+        // After an emoji or a quote the capital may start a sentence: not learned.
+        model.learn("The", after: nil, atSentenceStart: false)
+        XCTAssertEqual(model.form(of: "the"), "the")
+        XCTAssertEqual(model.count("the", after: nil), 0)
+        // A slip after a word is learned, and forgotten once you write it in lowercase.
+        model.learn("The", after: "is", atSentenceStart: false)
+        XCTAssertEqual(model.form(of: "the"), "The")
+        model.learn("the", after: "is", atSentenceStart: false)
+        XCTAssertEqual(model.form(of: "the"), "The")
+        model.learn("the", after: "is", atSentenceStart: false)
+        XCTAssertEqual(model.form(of: "the"), "the")
+        // Capitals inside a word are kept wherever it's typed.
+        model.learn("iPhone", after: nil, atSentenceStart: true)
+        XCTAssertEqual(model.form(of: "iphone"), "iPhone")
+    }
+
+    func testReadsWhatOlderVersionsSaved() throws {
+        let old = #"{"words":{"the":3,"dana":1},"pairs":{"is":{"the":2}},"forms":{"the":"The","dana":"Dana"}}"#
+        var model = try JSONDecoder().decode(WordModel.self, from: Data(old.utf8))
+        XCTAssertEqual(model.count("the"), 3)
+        XCTAssertEqual(model.count("the", after: "is"), 2)
+        XCTAssertEqual(model.form(of: "dana"), "Dana")
+        // An old slip goes as soon as the word is written in lowercase.
+        model.learn("the", after: "see", atSentenceStart: false)
+        XCTAssertEqual(model.form(of: "the"), "the")
+        let again = try JSONDecoder().decode(WordModel.self, from: JSONEncoder().encode(model))
+        XCTAssertEqual(again, model)
+    }
+
+    func testSuggestsCommonWordsInLowercase() {
+        var model = WordModel()
+        model.learn("The", after: "is", atSentenceStart: false)
+        let picks = Predictor.suggestions(prefix: "th", previous: "is", atSentenceStart: false, system: [], guesses: [], model: model, seed: .english)
+        XCTAssertTrue(picks.contains("the"), "\(picks)")
+        XCTAssertFalse(picks.contains("The"))
+        // A contact called Will doesn't capitalise "will".
+        let list = Lexicon(words: [("will", 45000), ("the", 580000)], next: [:])
+        let will = Predictor.suggestions(prefix: "wi", previous: "i", atSentenceStart: false, system: [], guesses: [], model: WordModel(),
+                                         seed: .english, lexicon: list, names: ["will": "Will"])
+        XCTAssertEqual(will.first, "will")
+        // At the start of a sentence they're capitalised as usual.
+        XCTAssertEqual(Predictor.suggestions(prefix: "th", previous: nil, atSentenceStart: true, system: [], guesses: [], model: model, seed: .english).first?.first, "T")
+    }
+
+    func testPredictsFromTheTwoWordsBefore() {
+        let list = Lexicon(words: [("to", 500), ("the", 900), ("be", 400), ("go", 300), ("do", 300), ("get", 200), ("see", 200)],
+                           next: ["to": ["the", "get", "help"], "like to": ["do", "go", "be"]])
+        let seed = WordSeed(common: [], next: [:], starters: [])
+        let next = Predictor.suggestions(prefix: "", previous: "to", earlier: "like", atSentenceStart: false, system: [], guesses: [], model: WordModel(), seed: seed, lexicon: list)
+        XCTAssertEqual(next.first, "do")
+        XCTAssertFalse(next.contains("help"))
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "to", atSentenceStart: false, system: [], guesses: [], model: WordModel(), seed: seed, lexicon: list).first, "the")
+        // Your own phrases too.
+        var model = WordModel()
+        for _ in 0..<2 { model.learn("tomorrow", after: "you", earlier: "see", atSentenceStart: false) }
+        XCTAssertEqual(model.count("tomorrow", after: "you", earlier: "see"), 2)
+        XCTAssertEqual(Predictor.suggestions(prefix: "", previous: "you", earlier: "see", atSentenceStart: false, system: [], guesses: [], model: model, seed: .english).first, "tomorrow")
+        XCTAssertEqual(Predictor.suggestions(prefix: "to", previous: "you", earlier: "see", atSentenceStart: false, system: ["today", "too"], guesses: [], model: model, seed: .english).first, "tomorrow")
+    }
+
+    func testFindsTheWordsBeforeInTheSentence() {
+        XCTAssertEqual(Predictor.previousWords("I would like to see is th"), ["is", "see"])
+        XCTAssertEqual(Predictor.previousWords("I would like to "), ["to", "like"])
+        XCTAssertEqual(Predictor.previousWords("Done. Now th"), ["Now"])
+        XCTAssertEqual(Predictor.previousWords("Hey Dana, how ar"), ["how"])
+        XCTAssertEqual(Predictor.previousWords("great 👍 the"), [])
+        XCTAssertEqual(Predictor.previousWords("at 5pm we "), ["we"])
+        XCTAssertEqual(Predictor.previousWords("one two three ", count: 3), ["three", "two", "one"])
+    }
+
     func testFindsThePreviousWordInTheSentence() {
         XCTAssertEqual(Predictor.previousWord("Hey Dana, how ar"), "how")
         XCTAssertEqual(Predictor.previousWord("Thank "), "Thank")
@@ -860,6 +932,60 @@ final class LexiconTests: XCTestCase {
         let picks = Predictor.suggestions(prefix: "da", previous: "with", atSentenceStart: false, system: ["data"], guesses: [], model: WordModel(),
                                           seed: .english, names: ["dana": "Dana", "daniel": "Daniel"])
         XCTAssertEqual(Set(picks.prefix(2)), ["Dana", "Daniel"])
+    }
+
+    func testLooksUpNextWordsInASortedFile() {
+        let file = "\tI the\nhi\tthere\nlike to\tdo go be\nthank\tyou\nמה\tנשמע קורה\n"
+        let next = NextWords(sortedFile: Data(file.utf8))
+        XCTAssertEqual(next[""], ["I", "the"])
+        XCTAssertEqual(next["like to"], ["do", "go", "be"])
+        XCTAssertEqual(next["thank"], ["you"])
+        XCTAssertEqual(next["מה"], ["נשמע", "קורה"])
+        XCTAssertNil(next["like"])
+        XCTAssertNil(next["thanks"])
+        XCTAssertNil(next["a"])
+        XCTAssertNil(next["zzz"])
+        XCTAssertNil(NextWords(sortedFile: Data())["hi"])
+        // Any order, from a string or a dictionary.
+        XCTAssertEqual(NextWords(file: "thank\tyou\n\tI\nhi\tthere")["hi"], ["there"])
+        XCTAssertEqual(NextWords(["b": ["c"], "a": ["b"]])["b"], ["c"])
+    }
+
+    /// The keyboard's own files: sorted the way the lookup expects, with useful pairs.
+    func testTheKeyboardsWordListsAreSortedAndPredictWell() throws {
+        let data = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("iOS/Keyboard/Data")
+        for language in ["en", "he"] {
+            let file = try Data(contentsOf: data.appendingPathComponent("\(language).next"))
+            let next = NextWords(sortedFile: file)
+            let lines = String(decoding: file, as: UTF8.self).split(separator: "\n")
+            XCTAssertGreaterThan(lines.count, 10_000)
+            for line in lines {
+                let key = String(line.prefix { $0 != "\t" })
+                XCTAssertNotNil(next[key], "\(language): \(key)")
+            }
+        }
+        let english = Lexicon(wordsFile: try String(contentsOf: data.appendingPathComponent("en.words"), encoding: .utf8),
+                              sortedNextFile: try Data(contentsOf: data.appendingPathComponent("en.next")))
+        func predict(_ before: String, model: WordModel = WordModel()) -> [String] {
+            let word = TypingRules.currentWord(before)
+            let start = TypingRules.startsSentence(String(before.dropLast(word.count)))
+            let previous = start ? [] : Predictor.previousWords(before)
+            return Predictor.suggestions(prefix: word, previous: previous.first, earlier: previous.dropFirst().first, atSentenceStart: start,
+                                         system: [], guesses: [], model: model, seed: .english, lexicon: english)
+        }
+        XCTAssertEqual(predict("I would like to ").first, "do")
+        XCTAssertTrue(predict("I'm going to ").contains("be"))
+        XCTAssertEqual(Set(predict("Thank you ")), ["for", "so", "very"])
+        XCTAssertTrue(predict("See you ").contains("soon"))
+        XCTAssertEqual(predict("I'm on my ").first, "way")
+        XCTAssertEqual(predict("Can you let me ").first, "know")
+        XCTAssertEqual(predict("How are ").first, "you")
+        var slipped = WordModel()
+        slipped.learn("The", after: "is", atSentenceStart: false)
+        let typing = predict("I would like to see is th", model: slipped)
+        XCTAssertTrue(typing.contains("the"), "\(typing)")
+        XCTAssertFalse(typing.contains { $0.first?.isUppercase == true }, "\(typing)")
     }
 
     func testAutocorrectPrefersTheCommonerGuessAndLeavesKnownWords() {
