@@ -394,12 +394,13 @@ struct KeyboardSettingsView: View {
         Form {
             Section {
                 Toggle("Autocorrect", isOn: $settings.autocorrect)
+                Toggle("Swipe to type", isOn: $settings.swipeTyping)
                 Toggle("Check each sentence with Claude", isOn: $settings.checkSentences)
                 Toggle("Finish sentences with Claude", isOn: $settings.completeSentences)
             } header: {
                 Text("Typing")
             } footer: {
-                Text("When you pause after a word, Claude guesses the rest of the sentence; tap it in the suggestion bar to type it. Your contacts' names come up as suggestions and aren't autocorrected.")
+                Text("Swipe to type: slide across the letters of a word without lifting your finger; the suggestion bar has the other words it may be. When you pause after a word, Claude guesses the rest of the sentence; tap it in the suggestion bar to type it. Your contacts' names come up as suggestions and aren't autocorrected.")
             }
             Section("Layout") {
                 Toggle("Number row", isOn: $settings.numberRow)

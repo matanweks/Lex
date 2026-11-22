@@ -1170,3 +1170,90 @@ final class ArticleTests: XCTestCase {
         XCTAssertEqual(ArticleText.chunks("short"), ["short"])
     }
 }
+
+final class SwipeTypingTests: XCTestCase {
+    /// The letter keys' centres in key widths, rows 1.45 apart as on the phone.
+    private func centres(_ language: KeyboardLanguage) -> [Character: SwipeTyping.Point] {
+        var out: [Character: SwipeTyping.Point] = [:]
+        for (r, row) in KeyboardLayout.rows(.letters, language).prefix(3).enumerated() {
+            var x = (KeyboardLayout.unitsPerRow - row.reduce(0) { $0 + $1.width }) / 2
+            for cap in row {
+                if case .character(let c) = cap.action, let ch = c.first, ch.isLetter { out[ch] = .init(x: x + cap.width / 2, y: Double(r) * 1.45) }
+                x += cap.width
+            }
+        }
+        return out
+    }
+
+    /// A finger's path through the word's keys, a little off each one and wobbling.
+    private func swipe(_ word: String, _ keys: [Character: SwipeTyping.Point], seed: Double = 1) -> [SwipeTyping.Point] {
+        let line = SwipeTyping.keyLine(word, keys)!
+        let targets = line.enumerated().map { i, p in SwipeTyping.Point(x: p.x + 0.2 * sin(Double(i) * 2.1 + seed), y: p.y + 0.2 * cos(Double(i) * 1.7 + seed)) }
+        var path: [SwipeTyping.Point] = []
+        for (a, b) in zip(targets, targets.dropFirst()) {
+            let n = max(2, Int(SwipeTyping.distance(a, b) / 0.15))
+            for i in 0..<n {
+                let f = Double(i) / Double(n)
+                path.append(.init(x: a.x + (b.x - a.x) * f + 0.03 * sin(Double(path.count)), y: a.y + (b.y - a.y) * f))
+            }
+        }
+        return path + [targets[targets.count - 1]]
+    }
+
+    private lazy var english: Lexicon = {
+        let data = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("iOS/Keyboard/Data")
+        return Lexicon(wordsFile: try! String(contentsOf: data.appendingPathComponent("en.words"), encoding: .utf8),
+                       sortedNextFile: try! Data(contentsOf: data.appendingPathComponent("en.next")))
+    }()
+
+    func testSpellsCommonWordsFromTheirPaths() {
+        let keys = centres(.english)
+        for word in ["hello", "world", "thanks", "the", "you", "meeting", "tomorrow", "great", "sorry", "about", "keyboard", "people"] {
+            let found = SwipeTyping.words(path: swipe(word, keys), keys: keys, keyWidth: 1, lexicon: english)
+            XCTAssertEqual(found.first, word, "\(found)")
+        }
+        // In any units: the key width scales it.
+        let big = swipe("hello", keys).map { SwipeTyping.Point(x: $0.x * 36, y: $0.y * 36) }
+        XCTAssertEqual(SwipeTyping.words(path: big, keys: keys.mapValues { .init(x: $0.x * 36, y: $0.y * 36) }, keyWidth: 36, lexicon: english).first, "hello")
+        // Apostrophes aren't on the letter keys.
+        XCTAssertTrue(SwipeTyping.words(path: swipe("dont", keys), keys: keys, keyWidth: 1, lexicon: english).contains("don't"))
+    }
+
+    func testATapIsNotASwipe() {
+        let keys = centres(.english)
+        let h = keys["h"]!
+        XCTAssertEqual(SwipeTyping.words(path: [h, .init(x: h.x + 0.3, y: h.y)], keys: keys, keyWidth: 1, lexicon: english), [])
+    }
+
+    func testTheWordsBeforeAndYourWordsDecideBetweenLikePaths() {
+        let keys = centres(.english)
+        // "to" and "too" draw the same line.
+        let path = swipe("to", keys)
+        XCTAssertEqual(SwipeTyping.words(path: path, keys: keys, keyWidth: 1, lexicon: english).first, "to")
+        var model = WordModel()
+        for _ in 0..<3 { model.learn("too", after: "me", atSentenceStart: false) }
+        XCTAssertEqual(SwipeTyping.words(path: path, keys: keys, keyWidth: 1, lexicon: english, model: model, previous: "me").first, "too")
+        // Names and words you use that the word list doesn't have.
+        XCTAssertEqual(SwipeTyping.words(path: swipe("noa", keys), keys: keys, keyWidth: 1, lexicon: english, names: ["noa": "Noa"]).first, "noa")
+        for _ in 0..<3 { model.learn("lex", after: nil, atSentenceStart: true) }
+        XCTAssertEqual(SwipeTyping.words(path: swipe("lex", keys), keys: keys, keyWidth: 1, lexicon: english, model: model).first, "lex")
+    }
+
+    func testSpellsHebrew() throws {
+        let data = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("iOS/Keyboard/Data")
+        let hebrew = Lexicon(wordsFile: try String(contentsOf: data.appendingPathComponent("he.words"), encoding: .utf8),
+                             sortedNextFile: try Data(contentsOf: data.appendingPathComponent("he.next")))
+        let keys = centres(.hebrew)
+        for word in ["שלום", "תודה", "אני", "מחר"] {
+            XCTAssertTrue(SwipeTyping.words(path: swipe(word, keys), keys: keys, keyWidth: 1, lexicon: hebrew).prefix(3).contains(word), word)
+        }
+    }
+
+    func testListsTheWordsThatStartWithAPrefix() {
+        let list = Lexicon(words: [("a", 10), ("as", 5), ("at", 7), ("be", 3)], next: [:])
+        XCTAssertEqual(list.words(startingWith: "a").map(\.word), ["a", "at", "as"])
+        XCTAssertEqual(list.words(startingWith: "c").count, 0)
+    }
+}

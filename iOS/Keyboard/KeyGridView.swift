@@ -5,8 +5,9 @@ import UIKit
 
 /// The typing keys. UIKit rather than SwiftUI so it can follow several fingers at once (fast
 /// two-thumb typing overlaps touches), give each key the gap around it, and show the letter
-/// above your finger. Like Gboard: hold a key for its digit and accents, slide along the
-/// space bar to move the cursor, and hold or swipe left on delete to remove whole words.
+/// above your finger. Like Gboard: hold a key for its digit and accents, slide across the
+/// letters to type a word (with a trail behind your finger), slide along the space bar to
+/// move the cursor, and hold or swipe left on delete to remove whole words.
 final class KeyGridView: UIView {
     struct Look: Equatable {
         var rows: [[KeyCap]] = []
@@ -29,6 +30,10 @@ final class KeyGridView: UIView {
     var onCursor: ((Int) -> Void)?
     /// Delete held long enough, or swiped left: remove this many words.
     var onDeleteWords: ((Int) -> Void)?
+    /// A swipe across the letters: the finger's path, the letter keys' centres and the distance
+    /// from one key to the next. True when it typed a word; otherwise the key under the finger
+    /// is typed, as when a finger slides. Nil turns swipe typing off.
+    var onSwipe: ((_ path: [CGPoint], _ keys: [Character: CGPoint], _ keyWidth: CGFloat) -> Bool)?
     /// Each key press clicks and taps, as the settings say. The keyboard's own clicks need
     /// Full Access; without it the system's play, when they're on in iOS Settings.
     var sound = true
@@ -36,7 +41,7 @@ final class KeyGridView: UIView {
     var ownClicks = false
 
     private struct Press {
-        enum Mode { case tap, alternates([String], Int), cursor(Int), deleteWords(Int) }
+        enum Mode { case tap, alternates([String], Int), cursor(Int), deleteWords(Int), swipe([CGPoint]) }
         var key: Int
         let start: CGPoint
         var mode = Mode.tap
@@ -52,6 +57,9 @@ final class KeyGridView: UIView {
     private let haptic = UIImpactFeedbackGenerator(style: .light)
     private let gap: CGFloat = 6
     private let rowGap: CGFloat = 11
+    /// From one letter key's centre to the next.
+    private var pitch: CGFloat = 36
+    private let trail = CAShapeLayer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -61,6 +69,12 @@ final class KeyGridView: UIView {
         addSubview(choices)
         popup.isHidden = true
         choices.isHidden = true
+        trail.fillColor = nil
+        trail.strokeColor = UIColor(red: 0.36, green: 0.30, blue: 0.92, alpha: 0.75).cgColor
+        trail.lineWidth = 7
+        trail.lineCap = .round
+        trail.lineJoin = .round
+        layer.addSublayer(trail)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -83,6 +97,8 @@ final class KeyGridView: UIView {
         guard !rows.isEmpty, bounds.width > 0 else { return }
         let unit = (bounds.width - gap * (KeyboardLayout.unitsPerRow - 1) - 6) / KeyboardLayout.unitsPerRow
         let height = (bounds.height - rowGap * CGFloat(rows.count - 1) - 6) / CGFloat(rows.count)
+        pitch = unit + gap
+        trail.frame = bounds
         var i = 0
         for (r, row) in rows.enumerated() {
             let width = row.reduce(0) { $0 + CGFloat($1.width) * unit } + gap * CGFloat(row.count - 1)
@@ -119,6 +135,8 @@ final class KeyGridView: UIView {
     // MARK: Touches
 
     override func touchesBegan(_ set: Set<UITouch>, with event: UIEvent?) {
+        // A second finger while one swipes is a slip: the swipe goes on.
+        guard !swiping else { return }
         for touch in set {
             let point = touch.location(in: self)
             guard let i = key(at: point) else { continue }
@@ -156,6 +174,10 @@ final class KeyGridView: UIView {
                     selection.selectionChanged()
                     p.mode = .cursor(steps)
                 }
+            case .swipe(var path):
+                path += (event?.coalescedTouches(for: touch) ?? [touch]).map { $0.location(in: self) }
+                p.mode = .swipe(path)
+                drawTrail(path)
             case .deleteWords(let words):
                 let count = 1 + Int(max(0, p.start.x - point.x - 24) / 30)
                 if count != words {
@@ -174,6 +196,13 @@ final class KeyGridView: UIView {
                     stopRepeating()
                     popup.show("1 word", above: keys[p.key].view.frame, small: true)
                     p.mode = .deleteWords(1)
+                } else if onSwipe != nil, presses.count == 1, isLetter(action), hypot(point.x - p.start.x, point.y - p.start.y) > pitch * 0.6 {
+                    // Sliding on from a letter: a swipe, typed as a word when the finger lifts.
+                    cancelHold()
+                    release(p.key)
+                    p.mode = .swipe([p.start, point])
+                    trail.removeAllAnimations()
+                    drawTrail([p.start, point])
                 } else if action != .delete, action != .space, let i = key(at: point), i != p.key {
                     // Sliding a finger moves to the key under it, like the system keyboard.
                     cancelHold()
@@ -197,6 +226,11 @@ final class KeyGridView: UIView {
                 onText?(options[chosen])
             case .cursor:
                 break
+            case .swipe(let path):
+                fadeTrail()
+                let end = touch.location(in: self)
+                let typed = onSwipe?(path + [end], letterCentres(), pitch) ?? false
+                if !typed, let i = key(at: end) { onKey?(keys[i].cap.action) }
             case .deleteWords(let words):
                 onDeleteWords?(words)
             case .tap:
@@ -215,8 +249,59 @@ final class KeyGridView: UIView {
             release(p.key)
             cancelHold()
             choices.isHidden = true
+            if case .swipe = p.mode { fadeTrail() }
             if keys[p.key].cap.action == .delete { stopRepeating() }
         }
+    }
+
+    // MARK: Swipe typing
+
+    private var swiping: Bool {
+        presses.values.contains { if case .swipe = $0.mode { return true } else { return false } }
+    }
+
+    private func isLetter(_ action: KeyAction) -> Bool {
+        if case .character(let c) = action, c.count == 1, c.first?.isLetter == true { return true }
+        return false
+    }
+
+    /// Where each letter key is, by its lowercase letter.
+    private func letterCentres() -> [Character: CGPoint] {
+        var out: [Character: CGPoint] = [:]
+        for (cap, view) in keys {
+            if case .character(let c) = cap.action, c.count == 1, let letter = c.lowercased().first, letter.isLetter {
+                out[letter] = CGPoint(x: view.frame.midX, y: view.frame.midY)
+            }
+        }
+        return out
+    }
+
+    private func drawTrail(_ path: [CGPoint]) {
+        guard let first = path.first else { return }
+        let line = UIBezierPath()
+        line.move(to: first)
+        path.dropFirst().forEach { line.addLine(to: $0) }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        trail.path = line.cgPath
+        trail.opacity = 1
+        CATransaction.commit()
+    }
+
+    private func fadeTrail() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, !self.swiping else { return }
+            self.trail.path = nil
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        fade.duration = 0.25
+        trail.opacity = 0
+        trail.add(fade, forKey: "fade")
+        CATransaction.commit()
     }
 
     private func feedback(_ action: KeyAction) {
@@ -493,11 +578,16 @@ struct KeyGrid: UIViewRepresentable {
             view.onText = { text in text.forEach { route(.character(String($0))) } }
             view.onCursor = { _ in }
             view.onDeleteWords = { count in (0..<count * 4).forEach { _ in route(.delete) } }
+            view.onSwipe = nil
             return
         }
         view.onKey = { [typist] in typist.press($0) }
         view.onText = { [typist] in typist.typeAlternate($0) }
         view.onCursor = { [typist] in typist.moveCursor(by: $0) }
         view.onDeleteWords = { [typist] in typist.deleteWords($0) }
+        view.onSwipe = settings.swipeTyping ? { [typist] path, keys, width in
+            func point(_ p: CGPoint) -> SwipeTyping.Point { SwipeTyping.Point(x: Double(p.x), y: Double(p.y)) }
+            return typist.swipe(path: path.map(point), keys: keys.mapValues(point), keyWidth: Double(width))
+        } : nil
     }
 }

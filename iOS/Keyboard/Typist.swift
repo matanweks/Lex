@@ -2,8 +2,8 @@ import Combine
 import LexCore
 import UIKit
 
-/// Typing on the Lex keyboard: pages, shift, auto-capitals, the suggestion bar (completions
-/// and next-word predictions from the word lists and what you type), autocorrect, your iOS
+/// Typing on the Lex keyboard: pages, shift, auto-capitals, swipe typing, the suggestion bar
+/// (completions and next-word predictions from the word lists and what you type), autocorrect, your iOS
 /// text replacements and contacts' names, Claude's fixes for each sentence you finish, and
 /// Claude's guess at the rest of a sentence when you pause.
 @MainActor
@@ -61,6 +61,9 @@ final class Typist: ObservableObject {
     private var autoShifted = false
     /// Delete right after an autocorrection puts back what you typed.
     private var undoCorrection: (typed: String, original: String)?
+    /// The word a swipe just typed and the others it may have been, while the cursor is right
+    /// after it: the bar offers them, and delete removes the whole word.
+    private var swiped: (word: String, others: [String])?
     private var checkTask: Task<Void, Never>?
     private var checkedSentence = ""
     /// What you type, learned on this phone for suggestions (never sent anywhere).
@@ -179,7 +182,18 @@ final class Typist: ObservableObject {
 
     func press(_ action: KeyAction) {
         guard let c = controller else { return }
+        let justSwiped = swiped.flatMap { c.before.hasSuffix($0.word) ? $0.word : nil }
+        if action != .shift { swiped = nil }
         switch action {
+        case .character(let ch) where justSwiped != nil && ch.first.map { $0.isLetter || $0.isNumber } == true:
+            // A letter right after a swiped word starts the next word, like Gboard.
+            learnWord(before: c.before)
+            c.type(" " + (page == .letters && shift != .off ? ch.uppercased() : ch))
+            undoCorrection = nil
+            if shift == .on { shift = .off; autoShifted = false }
+        case .delete where justSwiped != nil:
+            c.deleteBackward(justSwiped!.count)
+            undoCorrection = nil
         case .character(let ch):
             if ",.!?;:)".contains(ch) { learnWord(before: c.before) }
             c.type(page == .letters && shift != .off ? ch.uppercased() : ch)
@@ -267,6 +281,46 @@ final class Typist: ObservableObject {
         afterChange()
     }
 
+    /// A swipe across the letters: types the likeliest word (after a space when it follows a
+    /// word) and offers the others in the bar. False when no word fits.
+    func swipe(path: [SwipeTyping.Point], keys: [Character: SwipeTyping.Point], keyWidth: Double) -> Bool {
+        guard let c = controller else { return false }
+        let before = c.before
+        let needsSpace = before.last.map { !$0.isWhitespace && !Self.noSpaceAfter.contains($0) } ?? false
+        let context = needsSpace ? before + " " : before
+        let start = TypingRules.startsSentence(context)
+        let previous = start ? [] : Predictor.previousWords(context)
+        let list = Self.lexicons[language] ?? .empty
+        let found = SwipeTyping.words(path: path, keys: keys, keyWidth: keyWidth, lexicon: list, model: words, names: names,
+                                      previous: previous.first, earlier: previous.dropFirst().first)
+        guard !found.isEmpty else { return false }
+        var shown: [String] = []
+        for word in found {
+            var form = Predictor.form(of: word, model: words, seed: .for(language), lexicon: list, names: names)
+            if shift == .locked {
+                form = form.uppercased()
+            } else if shift == .on || (needsSpace && start && c.autocapitalizes) {
+                // Shift, or a sentence that ended right before ("Done." then a swipe).
+                form = form.prefix(1).uppercased() + form.dropFirst()
+            }
+            if !shown.contains(form) { shown.append(form) }
+        }
+        if needsSpace {
+            learnWord(before: before)
+            c.type(" ")
+        }
+        c.type(shown[0])
+        swiped = (shown[0], Array(shown.dropFirst()))
+        undoCorrection = nil
+        if shift == .on { shift = .off; autoShifted = false }
+        if page != .letters { page = .letters }
+        afterChange()
+        return true
+    }
+
+    /// A swiped word right after these doesn't get a space before it.
+    private static let noSpaceAfter: Set<Character> = ["(", "[", "{", "\"", "“", "'", "‘", "/", "@", "#", "-", "_"]
+
     private func space(_ c: KeyboardViewController) {
         let before = c.before
         // Two quick spaces after a word end the sentence.
@@ -319,6 +373,12 @@ final class Typist: ObservableObject {
     /// While typing a word: the word as typed, the best completion (middle) and one more.
     /// After a space: the three likeliest next words, the best in the middle.
     private func suggestions(_ before: String) -> [Suggestion] {
+        if let swiped, before.hasSuffix(swiped.word) {
+            // The other words the swipe may have been, around the one typed (Gboard's order).
+            let others = swiped.others.prefix(2).map { Suggestion(text: $0, kind: .word) }
+            return Array(others.prefix(1)) + [Suggestion(text: swiped.word, kind: .word, best: true)] + others.dropFirst()
+        }
+        swiped = nil
         guard controller?.correctsText == true else { return [] }
         let word = TypingRules.currentWord(before)
         let start = TypingRules.startsSentence(String(before.dropLast(word.count)))
@@ -352,7 +412,8 @@ final class Typist: ObservableObject {
     /// A suggestion was tapped: it replaces the word being typed (the first keeps it as typed).
     func choose(_ suggestion: Suggestion) {
         guard let c = controller else { return }
-        let word = TypingRules.currentWord(c.before)
+        let word = swiped.flatMap { c.before.hasSuffix($0.word) ? $0.word : nil } ?? TypingRules.currentWord(c.before)
+        swiped = nil
         if suggestion.kind == .keep {
             UITextChecker.learnWord(word)
             if !isPrivate() { words.keep(word); unsaved += 1 }

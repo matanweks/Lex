@@ -360,6 +360,7 @@ struct KeyboardView: View {
             VStack(alignment: .leading, spacing: 10) {
                 LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], spacing: 9) {
                     SettingToggle(title: "Autocorrect", on: $settings.autocorrect)
+                    SettingToggle(title: "Swipe typing", on: $settings.swipeTyping)
                     SettingToggle(title: "Check sentences", on: $settings.checkSentences)
                     SettingToggle(title: "Finish sentences", on: $settings.completeSentences)
                     SettingToggle(title: "Number row", on: $settings.numberRow)

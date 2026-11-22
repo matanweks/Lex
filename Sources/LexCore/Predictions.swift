@@ -300,6 +300,11 @@ public enum Predictor {
         }
     }
 
+    /// How a word from the word lists is shown: see `form(of:model:seed:common:lexicon:names:)`.
+    public static func form(of word: String, model: WordModel, seed: WordSeed, lexicon: Lexicon, names: [String: String]) -> String {
+        form(of: word, model: model, seed: seed, common: Set(seed.common.map { $0.lowercased() }), lexicon: lexicon, names: names)
+    }
+
     /// How a suggested word is written: a contact's name or a word you capitalise as you do
     /// ("Dana", "iPhone"), but a common word stays lowercase even if a contact or a slip
     /// capitalised it ("will", not "Will"; "the", not "The"), unless it's "I".

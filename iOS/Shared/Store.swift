@@ -312,6 +312,8 @@ final class KeyboardSettings: ObservableObject {
     @Published var checkSentences = true { didSet { save(checkSentences, "checkSentences") } }
     /// Claude offers the rest of the sentence after a pause (Smart Compose).
     @Published var completeSentences = true { didSet { save(completeSentences, "completeSentences") } }
+    /// Slide across the letters to type a word.
+    @Published var swipeTyping = true { didSet { save(swipeTyping, "swipeTyping") } }
     @Published var numberRow = false { didSet { save(numberRow, "numberRow") } }
     @Published var height = Height.normal { didSet { save(height.rawValue, "keyboardHeight") } }
     @Published var sound = true { didSet { save(sound, "keySound") } }
@@ -326,6 +328,7 @@ final class KeyboardSettings: ObservableObject {
         autocorrect = d.object(forKey: "autocorrect") as? Bool ?? true
         checkSentences = d.object(forKey: "checkSentences") as? Bool ?? true
         completeSentences = d.object(forKey: "completeSentences") as? Bool ?? true
+        swipeTyping = d.object(forKey: "swipeTyping") as? Bool ?? true
         numberRow = d.bool(forKey: "numberRow")
         height = Height(rawValue: d.object(forKey: "keyboardHeight") as? Int ?? Height.normal.rawValue) ?? .normal
         sound = d.object(forKey: "keySound") as? Bool ?? true
