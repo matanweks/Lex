@@ -284,7 +284,7 @@ final class Typist: ObservableObject {
     /// A swipe across the letters: types the likeliest word (after a space when it follows a
     /// word) and offers the others in the bar. False when no word fits.
     func swipe(path: [SwipeTyping.Point], keys: [Character: SwipeTyping.Point], keyWidth: Double) -> Bool {
-        guard let c = controller else { return false }
+        guard canSwipe, let c = controller else { return false }
         let before = c.before
         let needsSpace = before.last.map { !$0.isWhitespace && !Self.noSpaceAfter.contains($0) } ?? false
         let context = needsSpace ? before + " " : before
@@ -317,6 +317,10 @@ final class Typist: ObservableObject {
         afterChange()
         return true
     }
+
+    /// Only where the field takes suggestions: not codes, usernames, emails, links, or fields
+    /// with autocorrect off, where a slide types the key under the finger as before.
+    var canSwipe: Bool { controller?.correctsText == true }
 
     /// A swiped word right after these doesn't get a space before it.
     private static let noSpaceAfter: Set<Character> = ["(", "[", "{", "\"", "“", "'", "‘", "/", "@", "#", "-", "_"]
@@ -373,13 +377,16 @@ final class Typist: ObservableObject {
     /// While typing a word: the word as typed, the best completion (middle) and one more.
     /// After a space: the three likeliest next words, the best in the middle.
     private func suggestions(_ before: String) -> [Suggestion] {
+        guard controller?.correctsText == true else {
+            swiped = nil
+            return []
+        }
         if let swiped, before.hasSuffix(swiped.word) {
             // The other words the swipe may have been, around the one typed (Gboard's order).
             let others = swiped.others.prefix(2).map { Suggestion(text: $0, kind: .word) }
             return Array(others.prefix(1)) + [Suggestion(text: swiped.word, kind: .word, best: true)] + others.dropFirst()
         }
         swiped = nil
-        guard controller?.correctsText == true else { return [] }
         let word = TypingRules.currentWord(before)
         let start = TypingRules.startsSentence(String(before.dropLast(word.count)))
         let previousWords = start ? [] : Predictor.previousWords(before)

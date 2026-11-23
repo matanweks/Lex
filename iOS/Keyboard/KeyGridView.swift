@@ -34,6 +34,8 @@ final class KeyGridView: UIView {
     /// from one key to the next. True when it typed a word; otherwise the key under the finger
     /// is typed, as when a finger slides. Nil turns swipe typing off.
     var onSwipe: ((_ path: [CGPoint], _ keys: [Character: CGPoint], _ keyWidth: CGFloat) -> Bool)?
+    /// Whether this field takes swipes, asked as each one starts (fields change under the keys).
+    var canSwipe: () -> Bool = { true }
     /// Each key press clicks and taps, as the settings say. The keyboard's own clicks need
     /// Full Access; without it the system's play, when they're on in iOS Settings.
     var sound = true
@@ -196,7 +198,7 @@ final class KeyGridView: UIView {
                     stopRepeating()
                     popup.show("1 word", above: keys[p.key].view.frame, small: true)
                     p.mode = .deleteWords(1)
-                } else if onSwipe != nil, presses.count == 1, isLetter(action), hypot(point.x - p.start.x, point.y - p.start.y) > pitch * 0.6 {
+                } else if onSwipe != nil, presses.count == 1, isLetter(action), hypot(point.x - p.start.x, point.y - p.start.y) > pitch * 0.6, canSwipe() {
                     // Sliding on from a letter: a swipe, typed as a word when the finger lifts.
                     cancelHold()
                     release(p.key)
@@ -579,12 +581,14 @@ struct KeyGrid: UIViewRepresentable {
             view.onCursor = { _ in }
             view.onDeleteWords = { count in (0..<count * 4).forEach { _ in route(.delete) } }
             view.onSwipe = nil
+            view.canSwipe = { false }
             return
         }
         view.onKey = { [typist] in typist.press($0) }
         view.onText = { [typist] in typist.typeAlternate($0) }
         view.onCursor = { [typist] in typist.moveCursor(by: $0) }
         view.onDeleteWords = { [typist] in typist.deleteWords($0) }
+        view.canSwipe = { [typist] in typist.canSwipe }
         view.onSwipe = settings.swipeTyping ? { [typist] path, keys, width in
             func point(_ p: CGPoint) -> SwipeTyping.Point { SwipeTyping.Point(x: Double(p.x), y: Double(p.y)) }
             return typist.swipe(path: path.map(point), keys: keys.mapValues(point), keyWidth: Double(width))
