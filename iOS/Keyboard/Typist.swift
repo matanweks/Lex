@@ -10,7 +10,8 @@ import UIKit
 final class Typist: ObservableObject {
     /// One slot in the suggestion bar, which is laid out like Gboard's: the best in the middle.
     struct Suggestion: Identifiable, Hashable {
-        enum Kind { case keep, word }
+        /// `retry`: another word an earlier swipe may have been; it replaces that word in place.
+        enum Kind { case keep, word, retry }
         let text: String
         let kind: Kind
         var best = false
@@ -61,9 +62,22 @@ final class Typist: ObservableObject {
     private var autoShifted = false
     /// Delete right after an autocorrection puts back what you typed.
     private var undoCorrection: (typed: String, original: String)?
-    /// The word a swipe just typed and the others it may have been, while the cursor is right
-    /// after it: the bar offers them, and delete removes the whole word.
-    private var swiped: (word: String, others: [String])?
+    /// A word a swipe typed, and the other words it may have been.
+    private struct Swiped: Equatable {
+        var word: String
+        var others: [String]
+    }
+    /// The word a swipe just typed, while the cursor is right after it: the bar offers the
+    /// others, and delete removes the whole word.
+    private var swiped: Swiped?
+    /// The last swipes, newest last: back on one of those words (a tap in the text, the space
+    /// bar's slide, deleting back to it) the bar offers its other words again. Kept only while
+    /// the keyboard is up.
+    private var swipeHistory: [Swiped] = []
+    private static let swipesKept = 30
+    /// The text before the cursor right after a letter key typed it: while it's unchanged
+    /// you're typing a word, not back on an old one.
+    private var keyedBefore: String?
     private var checkTask: Task<Void, Never>?
     private var checkedSentence = ""
     /// What you type, learned on this phone for suggestions (never sent anywhere).
@@ -160,6 +174,8 @@ final class Typist: ObservableObject {
     /// number fields.
     func appeared() {
         quickModel = Prefs.quickModel
+        swipeHistory = []
+        keyedBefore = nil
         controller?.requestSupplementaryLexicon { [weak self] lexicon in
             // iOS lists names (from your contacts and your own card) as entries that type themselves.
             let isName = { (entry: UILexiconEntry) in entry.userInput.lowercased() == entry.documentText.lowercased() }
@@ -193,6 +209,7 @@ final class Typist: ObservableObject {
             if shift == .on { shift = .off; autoShifted = false }
         case .delete where justSwiped != nil:
             c.deleteBackward(justSwiped!.count)
+            if let i = swipeHistory.lastIndex(where: { $0.word == justSwiped }) { swipeHistory.remove(at: i) }
             undoCorrection = nil
         case .character(let ch):
             if ",.!?;:)".contains(ch) { learnWord(before: c.before) }
@@ -239,7 +256,14 @@ final class Typist: ObservableObject {
             onEmoji?()
             return
         }
+        keyedBefore = Self.typesWord(action) ? c.before : nil
         afterChange()
+    }
+
+    /// A key that goes on typing a word.
+    private static func typesWord(_ action: KeyAction) -> Bool {
+        if case .character(let ch) = action, let first = ch.first { return first.isLetter || first.isNumber || first == "'" }
+        return false
     }
 
     func switchLanguage() {
@@ -253,6 +277,7 @@ final class Typist: ObservableObject {
     func type(_ text: String) {
         controller?.type(text)
         undoCorrection = nil
+        keyedBefore = nil
         afterChange()
     }
 
@@ -261,6 +286,7 @@ final class Typist: ObservableObject {
         controller?.type(text)
         undoCorrection = nil
         if shift == .on { shift = .off; autoShifted = false }
+        keyedBefore = controller?.before
         afterChange()
     }
 
@@ -268,6 +294,7 @@ final class Typist: ObservableObject {
     func moveCursor(by characters: Int) {
         controller?.moveCursor(by: characters)
         undoCorrection = nil
+        keyedBefore = nil
         afterChange()
     }
 
@@ -310,7 +337,11 @@ final class Typist: ObservableObject {
             c.type(" ")
         }
         c.type(shown[0])
-        swiped = (shown[0], Array(shown.dropFirst()))
+        let typed = Swiped(word: shown[0], others: Array(shown.dropFirst()))
+        swiped = typed
+        swipeHistory.append(typed)
+        if swipeHistory.count > Self.swipesKept { swipeHistory.removeFirst() }
+        keyedBefore = nil
         undoCorrection = nil
         if shift == .on { shift = .off; autoShifted = false }
         if page != .letters { page = .letters }
@@ -359,6 +390,7 @@ final class Typist: ObservableObject {
     func afterChange() {
         guard let c = controller else { return }
         let before = c.before
+        if keyedBefore != before { keyedBefore = nil }
         if language == .english, page == .letters, shift != .locked {
             let wants = c.autocapitalizes && TypingRules.startsSentence(before)
             if wants, shift == .off {
@@ -387,6 +419,7 @@ final class Typist: ObservableObject {
             return Array(others.prefix(1)) + [Suggestion(text: swiped.word, kind: .word, best: true)] + others.dropFirst()
         }
         swiped = nil
+        if let retry = retrySuggestions(before) { return retry }
         let word = TypingRules.currentWord(before)
         let start = TypingRules.startsSentence(String(before.dropLast(word.count)))
         let previousWords = start ? [] : Predictor.previousWords(before)
@@ -419,8 +452,12 @@ final class Typist: ObservableObject {
     /// A suggestion was tapped: it replaces the word being typed (the first keeps it as typed).
     func choose(_ suggestion: Suggestion) {
         guard let c = controller else { return }
-        let word = swiped.flatMap { c.before.hasSuffix($0.word) ? $0.word : nil } ?? TypingRules.currentWord(c.before)
+        if suggestion.kind == .retry { return retry(suggestion.text) }
+        let justSwiped = swiped.flatMap { c.before.hasSuffix($0.word) ? $0.word : nil }
+        let word = justSwiped ?? TypingRules.currentWord(c.before)
         swiped = nil
+        keyedBefore = nil
+        if let justSwiped, suggestion.text != justSwiped { replaced(justSwiped, with: suggestion.text) }
         if suggestion.kind == .keep {
             UITextChecker.learnWord(word)
             if !isPrivate() { words.keep(word); unsaved += 1 }
@@ -433,6 +470,46 @@ final class Typist: ObservableObject {
         undoCorrection = nil
         sentenceMayHaveEnded()
         afterChange()
+    }
+
+    // MARK: Swipe history
+
+    /// The word the cursor is in or touches, and how much of it is after the cursor.
+    private func wordAtCursor(_ before: String) -> (word: String, after: Int)? {
+        guard let c = controller, (c.selected ?? "").isEmpty else { return nil }
+        let isWordCharacter = { (ch: Character) in ch.isLetter || ch.isNumber || ch == "'" || ch == "’" }
+        let head = TypingRules.currentWord(before)
+        let tail = String((c.textDocumentProxy.documentContextAfterInput ?? "").prefix(while: isWordCharacter))
+        let word = head + tail
+        return word.isEmpty ? nil : (word, tail.count)
+    }
+
+    /// Back on a word a swipe typed: the other words it may have been, the likeliest in the
+    /// middle. Not while you're typing a word that happens to be the same.
+    private func retrySuggestions(_ before: String) -> [Suggestion]? {
+        guard !swipeHistory.isEmpty, keyedBefore == nil, let (word, _) = wordAtCursor(before),
+              let entry = swipeHistory.last(where: { $0.word == word }), !entry.others.isEmpty else { return nil }
+        let picks = Array(entry.others.prefix(3))
+        return [1, 0, 2].filter { $0 < picks.count }.map { Suggestion(text: picks[$0], kind: .retry, best: $0 == 0) }
+    }
+
+    /// Puts `replacement` in place of the swiped word the cursor is on, and keeps the word it
+    /// replaces among the others, to switch back.
+    private func retry(_ replacement: String) {
+        guard let c = controller, let (word, after) = wordAtCursor(c.before), swipeHistory.contains(where: { $0.word == word }) else { return }
+        if after > 0 { c.moveCursor(by: after) }
+        c.deleteBackward(word.count)
+        c.type(replacement)
+        replaced(word, with: replacement)
+        keyedBefore = nil
+        undoCorrection = nil
+        afterChange()
+    }
+
+    private func replaced(_ word: String, with replacement: String) {
+        guard let i = swipeHistory.lastIndex(where: { $0.word == word }) else { return }
+        let old = swipeHistory[i]
+        swipeHistory[i] = Swiped(word: replacement, others: [old.word] + old.others.filter { $0 != replacement })
     }
 
     /// A contact's name typed in lowercase gets its capitals, unless it's also a common word
