@@ -102,6 +102,11 @@ final class DebugHooks {
             engine.tracker.probeApp(bundleID: String(c.dropFirst("probe-app-enhanced:".count)), enhance: true)
         case "compare-rects" where textEditFrontmost:
             if let snap = engine.snapshot { engine.tracker.compareRects(for: engine.issues, in: snap) }
+        case let c where c.hasPrefix("ax-off:"):
+            // Switches an app's Chromium accessibility off, as Chromium may do by itself, to test waking it.
+            if let app = NSRunningApplication.runningApplications(withBundleIdentifier: String(c.dropFirst("ax-off:".count))).first {
+                AXUIElementSetAttributeValue(AXUIElementCreateApplication(app.processIdentifier), "AXManualAccessibility" as CFString, kCFBooleanFalse)
+            }
         case "ax-probe":
             engine.tracker.probeGeometry(enhance: false)
         case "ax-probe-enhanced":
@@ -157,6 +162,10 @@ final class DebugHooks {
             Log.info("panel original: \(m.original.replacingOccurrences(of: "\n", with: "⏎"))")
             Log.info("panel result: \(m.latest.replacingOccurrences(of: "\n", with: "⏎"))")
             Log.info("panel note: \(m.note ?? "-")")
+        case "panel-snapshot":
+            // Saved next to the log, on this Mac only.
+            let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Lex-panel.png")
+            Log.info("panel snapshot: \(refine.debugSnapshot(to: url))")
         case "panel-accept" where NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.TextEdit":
             refine.accept()
         case "panel-close":

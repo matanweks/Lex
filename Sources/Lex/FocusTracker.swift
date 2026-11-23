@@ -43,6 +43,8 @@ final class FocusTracker {
     private var lastFullRead = Date.distantPast
     private var preparedPids = Set<pid_t>()
     private var webBasedPids = [pid_t: Bool]()
+    private var chromiumPids = Set<pid_t>()
+    private var wokenAt = [pid_t: Date]()
     private var scrollArea: (field: AXUIElement, area: AXUIElement?)?
     private var probeRange: NSRange?
     private var probeRect: CGRect?
@@ -148,7 +150,10 @@ final class FocusTracker {
     private func read(reuseText: Bool) -> FieldSnapshot? {
         guard AX.isTrusted, let front = frontmost, front.pid != ownPid, !excluded.contains(front.bundleID) else { return nil }
         let webBased = prepare(front)
-        guard let el = AX.focusedElement(inApp: front.pid), let role = AX.string(el, kAXRoleAttribute) else { return nil }
+        guard let el = AX.focusedElement(inApp: front.pid), let role = AX.string(el, kAXRoleAttribute) else {
+            if webBased { wake(front) }
+            return nil
+        }
         let subrole = AX.string(el, kAXSubroleAttribute)
         if role == "AXSecureTextField" || subrole == "AXSecureTextField" || subrole == "AXSearchField" { return nil }
         let textRoles: Set<String> = ["AXTextArea", "AXTextField", "AXComboBox"]
@@ -192,8 +197,19 @@ final class FocusTracker {
             AX.enableAccessibilityTree(pid: app.pid, chromiumBrowser: chromium)
             Log.info("prepared \(app.bundleID): \(chromium ? "chromium browser" : electron ? "electron" : "native")")
         }
+        if chromium { chromiumPids.insert(app.pid) }
         webBasedPids[app.pid] = chromium || electron
         return chromium || electron
+    }
+
+    /// Chromium can switch its accessibility tree back off a while later (the Claude app did),
+    /// and then no field in it reports focus. Ask again, at most every few seconds.
+    private func wake(_ app: (pid: pid_t, bundleID: String, url: URL?)) {
+        let last = wokenAt[app.pid]
+        guard Date().timeIntervalSince(last ?? .distantPast) > 3 else { return }
+        wokenAt[app.pid] = Date()
+        AX.enableAccessibilityTree(pid: app.pid, chromiumBrowser: chromiumPids.contains(app.pid))
+        if last == nil { Log.info("woke accessibility in \(app.bundleID)") }
     }
 
     enum ChromiumEngine { case none, browser, electron }

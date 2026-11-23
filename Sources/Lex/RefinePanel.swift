@@ -138,6 +138,9 @@ struct RefineView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .readingDirection(hebrew)
+                    // A new text view when the direction flips. Re-aligning one you've clicked
+                    // into makes SwiftUI change state mid-update, and it then draws nothing.
+                    .id(hebrew)
                 if model.lastRunUnchanged, !model.isStreaming {
                     Label("Already reads well, nothing to change.", systemImage: "checkmark.circle.fill")
                         .font(.caption).foregroundStyle(green)
@@ -284,6 +287,18 @@ final class RefineController {
     var onAccept: ((FieldSnapshot, NSRange, String, String) -> Void)?
 
     var isOpen: Bool { panel.isVisible }
+
+    /// Debug: a picture of the panel as Lex draws it, and its sizes (lengths only, no text).
+    func debugSnapshot(to url: URL) -> String {
+        guard let view = panel.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return "no panel view" }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        func scrollViews(_ v: NSView) -> [NSScrollView] { ((v as? NSScrollView).map { [$0] } ?? []) + v.subviews.flatMap(scrollViews) }
+        let scrolls = scrollViews(view).map { "clip \($0.contentView.bounds) doc \($0.documentView?.frame.size ?? .zero)" }
+        return "open \(isOpen) key \(panel.isKeyWindow) frame \(panel.frame) scale \(panel.backingScaleFactor) screen \(panel.screen?.localizedName ?? "-")"
+            + " | original \(model.original.count) latest \(model.latest.count) versions \(model.versions.count) streaming \(model.streamingText?.count ?? -1)"
+            + " diff \(model.showDiff) error \(model.error != nil) | \(scrolls.joined(separator: "; "))"
+    }
 
     init(client: ClaudeClient, settings: AppSettings, tracker: FocusTracker) {
         self.client = client
