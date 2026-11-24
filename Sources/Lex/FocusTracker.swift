@@ -66,6 +66,11 @@ final class FocusTracker {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             self?.setFrontmost(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
         }
+        // macOS hands a quit app's process number to a new process later, so forget what was learned about it.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let pid = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier else { return }
+            self?.queue.async { self?.forget(pid) }
+        }
         setFrontmost(NSWorkspace.shared.frontmostApplication)
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: .milliseconds(100), leeway: .milliseconds(10))
@@ -77,6 +82,14 @@ final class FocusTracker {
     private func setFrontmost(_ app: NSRunningApplication?) {
         let info = app.map { (pid: $0.processIdentifier, bundleID: $0.bundleIdentifier ?? "", url: $0.bundleURL) }
         queue.async { self.frontmost = info }
+    }
+
+    private func forget(_ pid: pid_t) {
+        preparedPids.remove(pid)
+        webBasedPids[pid] = nil
+        chromiumPids.remove(pid)
+        wokenAt[pid] = nil
+        enhancedProbed.remove(pid)
     }
 
     func setExcluded(_ ids: [String]) { queue.async { self.excluded = Set(ids) } }
