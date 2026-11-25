@@ -85,6 +85,8 @@ final class FocusTracker {
     }
 
     private func forget(_ pid: pid_t) {
+        // Until the next app comes forward, read nothing rather than whatever later takes this number.
+        if frontmost?.pid == pid { frontmost = nil }
         preparedPids.remove(pid)
         webBasedPids[pid] = nil
         chromiumPids.remove(pid)
